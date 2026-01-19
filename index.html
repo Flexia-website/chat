@@ -846,6 +846,42 @@
             background: rgba(255, 255, 255, 0.3);
             transform: rotate(180deg);
         }
+
+        /* Toast Notifications */
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            border-radius: 12px;
+            box-shadow: var(--shadow);
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            animation: slideDown 0.3s ease;
+            max-width: 300px;
+        }
+
+        .toast-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .toast-error {
+            background: var(--danger);
+            color: white;
+        }
+
+        .toast-warning {
+            background: var(--warning);
+            color: white;
+        }
+
+        .toast-info {
+            background: var(--primary);
+            color: white;
+        }
     </style>
 </head>
 <body>
@@ -1020,8 +1056,9 @@
         let isSoundEnabled = true;
         let isDarkMode = false;
         let unreadMessages = 0;
-        let lastScrollPosition = 0;
         let isAtBottom = true;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
 
         // Initialize chat
         function initChat() {
@@ -1080,42 +1117,76 @@
             socket = io({
                 transports: ['websocket', 'polling'],
                 reconnection: true,
-                reconnectionAttempts: 5,
-                reconnectionDelay: 1000
+                reconnectionAttempts: 10,
+                reconnectionDelay: 1000,
+                timeout: 20000
             });
 
             // Connection events
             socket.on('connect', () => {
-                console.log('✅ Connected to server');
+                console.log('✅ Connected to server:', socket.id);
                 updateStatus('Connected', 'connected');
+                reconnectAttempts = 0;
                 
-                // Register user
-                socket.emit('register_user', {
-                    device_id: deviceId,
-                    username: username
-                });
+                // Register user with retry logic
+                registerUser();
                 
                 playSound('connect');
+                showToast('Connected to support!', 'success');
             });
 
-            socket.on('disconnect', () => {
-                console.log('❌ Disconnected');
+            socket.on('connection_established', (data) => {
+                console.log('📡 Connection established:', data);
+            });
+
+            socket.on('disconnect', (reason) => {
+                console.log('❌ Disconnected:', reason);
                 updateStatus('Disconnected', 'disconnected');
-                showToast('Disconnected from server. Reconnecting...', 'warning');
+                
+                if (reason === 'io server disconnect') {
+                    // Server initiated disconnect, try to reconnect
+                    socket.connect();
+                }
             });
 
             socket.on('connect_error', (error) => {
                 console.error('Connection error:', error);
                 updateStatus('Connection Error', 'disconnected');
+                reconnectAttempts++;
+                
+                if (reconnectAttempts >= maxReconnectAttempts) {
+                    showToast('Cannot connect to server. Please refresh.', 'error');
+                } else {
+                    showToast(`Connecting... (${reconnectAttempts}/${maxReconnectAttempts})`, 'warning');
+                }
+            });
+
+            socket.on('reconnect', (attemptNumber) => {
+                console.log('🔄 Reconnected after', attemptNumber, 'attempts');
+                updateStatus('Connected', 'connected');
+                showToast('Reconnected!', 'success');
+                registerUser();
             });
 
             // Chat events
             socket.on('user_registered', (data) => {
                 console.log('✅ User registered:', data);
                 showToast('Successfully connected to support!', 'success');
+                
+                // Start heartbeat after successful registration
+                startHeartbeat();
+            });
+
+            socket.on('registration_failed', (data) => {
+                console.error('Registration failed:', data);
+                showToast('Registration failed: ' + data.message, 'error');
+                
+                // Retry registration after 3 seconds
+                setTimeout(registerUser, 3000);
             });
 
             socket.on('receive_message', (data) => {
+                console.log('📩 Received message:', data);
                 addMessageToChat(data);
                 
                 // Show typing indicator for support messages
@@ -1135,10 +1206,58 @@
                 }
             });
 
+            socket.on('new_user_message', (data) => {
+                console.log('📨 New user message event:', data);
+            });
+
+            socket.on('user_connected', (data) => {
+                console.log('👤 User connected event:', data);
+            });
+
+            socket.on('user_disconnected', (data) => {
+                console.log('👋 User disconnected event:', data);
+            });
+
             socket.on('error', (data) => {
-                console.error('Error:', data.message);
+                console.error('Server error:', data.message);
                 showToast('Error: ' + data.message, 'error');
             });
+
+            socket.on('heartbeat_ack', (data) => {
+                console.log('❤️ Heartbeat acknowledged:', data);
+            });
+        }
+
+        // Register user with server
+        function registerUser() {
+            if (!deviceId || !username) {
+                console.error('Cannot register: missing deviceId or username');
+                return;
+            }
+            
+            if (!socket || !socket.connected) {
+                console.error('Cannot register: socket not connected');
+                return;
+            }
+            
+            console.log('📝 Registering user:', { deviceId, username });
+            
+            socket.emit('register_user', {
+                device_id: deviceId,
+                username: username
+            });
+        }
+
+        // Heartbeat to keep connection alive
+        function startHeartbeat() {
+            setInterval(() => {
+                if (socket && socket.connected && deviceId) {
+                    socket.emit('heartbeat', {
+                        device_id: deviceId,
+                        timestamp: Date.now()
+                    });
+                }
+            }, 30000); // Every 30 seconds
         }
 
         // Send message
@@ -1148,6 +1267,18 @@
             
             if (!message) return;
             
+            if (!socket || !socket.connected) {
+                showToast('Not connected to server', 'error');
+                return;
+            }
+            
+            if (!deviceId) {
+                showToast('User not registered', 'error');
+                return;
+            }
+            
+            console.log('📤 Sending message:', { deviceId, username, message });
+            
             // Send to server
             socket.emit('send_message', {
                 device_id: deviceId,
@@ -1155,7 +1286,7 @@
                 message: message
             });
             
-            // Add to chat immediately
+            // Add to chat immediately (echo)
             addMessageToChat({
                 sender: username,
                 message: message,
@@ -1178,6 +1309,12 @@
             const file = fileInput.files[0];
             
             if (!file) return;
+            
+            if (!socket || !socket.connected) {
+                showToast('Not connected to server', 'error');
+                fileInput.value = '';
+                return;
+            }
             
             // Validate file size (5MB max)
             if (file.size > 5 * 1024 * 1024) {
@@ -1219,10 +1356,16 @@
                 if (isSoundEnabled) {
                     playSound('upload');
                 }
+                
+                console.log('📸 Image uploaded:', file.name);
+            };
+            
+            reader.onerror = function() {
+                showToast('Failed to read image file', 'error');
+                fileInput.value = '';
             };
             
             reader.readAsDataURL(file);
-            fileInput.value = '';
         }
 
         // Add message to chat
@@ -1235,12 +1378,6 @@
                 if (welcomeMsg) {
                     welcomeMsg.style.opacity = '0.5';
                 }
-            }
-            
-            // Remove loading state if present
-            const loading = container.querySelector('.loading-messages');
-            if (loading) {
-                loading.remove();
             }
             
             const msgDate = new Date(data.timestamp);
@@ -1260,7 +1397,7 @@
                                 ${data.sender}
                             </div>
                             <div class="message-image" onclick="openImageModal('${data.message}')">
-                                <img src="${data.message}" alt="Image">
+                                <img src="${data.message}" alt="Image" onload="this.parentElement.parentElement.parentElement.scrollIntoView({ behavior: 'smooth' })">
                             </div>
                             <div class="message-time">
                                 <i class="far fa-clock time-icon"></i>
@@ -1352,18 +1489,6 @@
             if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 sendMessage();
-            }
-            
-            // Tab key inserts 4 spaces
-            if (event.key === 'Tab') {
-                event.preventDefault();
-                const textarea = event.target;
-                const start = textarea.selectionStart;
-                const end = textarea.selectionEnd;
-                
-                textarea.value = textarea.value.substring(0, start) + '    ' + textarea.value.substring(end);
-                textarea.selectionStart = textarea.selectionEnd = start + 4;
-                autoResize(textarea);
             }
         }
 
@@ -1461,7 +1586,7 @@
         }
 
         function clearChat() {
-            if (confirm('Are you sure you want to clear all messages? This action cannot be undone.')) {
+            if (confirm('Are you sure you want to clear all messages? This will only clear your local view.')) {
                 const container = document.getElementById('chatMessages');
                 const welcomeMsg = container.querySelector('.welcome-message');
                 
@@ -1512,12 +1637,16 @@
                 // Apply dark theme
                 chatApp.style.backgroundColor = '#1a1d29';
                 chatApp.style.color = '#ffffff';
+                chatApp.querySelector('.chat-messages').style.background = 'linear-gradient(180deg, #2d3748 0%, #1a202c 100%)';
+                chatApp.querySelector('.chat-input-area').style.backgroundColor = '#2d3748';
                 themeIcon.className = 'fas fa-sun';
                 showToast('Dark mode enabled', 'info');
             } else {
                 // Apply light theme
                 chatApp.style.backgroundColor = '#ffffff';
                 chatApp.style.color = '#212529';
+                chatApp.querySelector('.chat-messages').style.background = 'linear-gradient(180deg, #f8f9fa 0%, #ffffff 100%)';
+                chatApp.querySelector('.chat-input-area').style.backgroundColor = 'white';
                 themeIcon.className = 'fas fa-moon';
                 showToast('Light mode enabled', 'info');
             }
@@ -1540,7 +1669,7 @@
         }
 
         function showHelp() {
-            alert(`Need help? Here are some tips:\n\n1. Type your message and press Enter to send\n2. Click the image icon to upload photos\n3. Use Shift+Enter for new lines\n4. Your chat is automatically saved\n5. Support is available 24/7\n\nYour ID: ${deviceId}`);
+            alert(`Need help? Here are some tips:\n\n1. Type your message and press Enter to send\n2. Click the image icon to upload photos\n3. Use Shift+Enter for new lines\n4. Your chat is automatically saved\n5. Support is available 24/7\n\nYour Device ID: ${deviceId}\nYour Username: ${username}`);
             toggleMenu();
         }
 
@@ -1562,29 +1691,10 @@
             // Create toast
             const toast = document.createElement('div');
             toast.className = `toast toast-${type}`;
-            toast.style.cssText = `
-                position: fixed;
-                top: 20px;
-                right: 20px;
-                background: ${type === 'error' ? '#ef233c' : type === 'warning' ? '#f8961e' : '#4cc9f0'};
-                color: white;
-                padding: 15px 25px;
-                border-radius: 12px;
-                box-shadow: var(--shadow);
-                z-index: 10000;
-                display: flex;
-                align-items: center;
-                gap: 12px;
-                animation: slideDown 0.3s ease;
-                max-width: 300px;
-            `;
-            
-            const icon = type === 'error' ? 'fa-exclamation-circle' : 
-                        type === 'warning' ? 'fa-exclamation-triangle' : 
-                        'fa-check-circle';
-            
             toast.innerHTML = `
-                <i class="fas ${icon}"></i>
+                <i class="fas ${type === 'error' ? 'fa-exclamation-circle' : 
+                              type === 'warning' ? 'fa-exclamation-triangle' : 
+                              'fa-check-circle'}"></i>
                 <span>${message}</span>
             `;
             
@@ -1602,32 +1712,29 @@
             if (!isSoundEnabled) return;
             
             try {
-                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                
-                if (type === 'message') {
-                    // Simple notification sound
-                    playTone(800, 0.1);
-                    setTimeout(() => playTone(1000, 0.1), 100);
-                } else if (type === 'connect') {
-                    // Connection sound
-                    playTone(600, 0.2);
-                    setTimeout(() => playTone(800, 0.2), 200);
-                    setTimeout(() => playTone(1000, 0.2), 400);
-                } else if (type === 'upload') {
-                    // Upload sound
-                    playTone(1200, 0.1);
-                } else if (type === 'notification') {
-                    // Notification sound
-                    playTone(1000, 0.15);
+                if (typeof AudioContext !== 'undefined') {
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    
+                    if (type === 'message') {
+                        playTone(audioContext, 800, 0.1);
+                        setTimeout(() => playTone(audioContext, 1000, 0.1), 100);
+                    } else if (type === 'connect') {
+                        playTone(audioContext, 600, 0.2);
+                        setTimeout(() => playTone(audioContext, 800, 0.2), 200);
+                        setTimeout(() => playTone(audioContext, 1000, 0.2), 400);
+                    } else if (type === 'upload') {
+                        playTone(audioContext, 1200, 0.1);
+                    } else if (type === 'notification') {
+                        playTone(audioContext, 1000, 0.15);
+                    }
                 }
             } catch (e) {
-                console.log('Audio not supported');
+                console.log('Audio not supported:', e);
             }
         }
 
-        function playTone(frequency, duration) {
+        function playTone(audioContext, frequency, duration) {
             try {
-                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 const oscillator = audioContext.createOscillator();
                 const gainNode = audioContext.createGain();
                 
@@ -1679,18 +1786,42 @@
         // Initialize on load
         window.onload = initChat;
 
-        // Export for debugging
-        window.chatApp = {
-            deviceId: () => deviceId,
-            username: () => username,
-            socket: () => socket,
-            sendTestMessage: () => {
-                const testMsg = "Hello! This is a test message from the user.";
-                socket.emit('send_message', {
-                    device_id: deviceId,
-                    username: username,
-                    message: testMsg
-                });
+        // Debugging utilities
+        window.chatDebug = {
+            getState: () => ({
+                deviceId,
+                username,
+                socketConnected: socket?.connected,
+                socketId: socket?.id,
+                isSoundEnabled,
+                unreadMessages
+            }),
+            testConnection: () => {
+                if (socket && socket.connected) {
+                    showToast('Socket connected: ' + socket.id, 'success');
+                } else {
+                    showToast('Socket not connected', 'error');
+                }
+            },
+            testMessage: () => {
+                if (socket && socket.connected) {
+                    const testMsg = "Test message at " + new Date().toLocaleTimeString();
+                    socket.emit('send_message', {
+                        device_id: deviceId,
+                        username: username,
+                        message: testMsg
+                    });
+                    showToast('Test message sent', 'success');
+                } else {
+                    showToast('Cannot send: not connected', 'error');
+                }
+            },
+            reconnect: () => {
+                if (socket) {
+                    socket.disconnect();
+                    socket.connect();
+                    showToast('Reconnecting...', 'warning');
+                }
             }
         };
     </script>
