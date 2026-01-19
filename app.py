@@ -101,9 +101,10 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# In-memory storage for admin sessions
+# In-memory storage for sessions
 admin_sessions = {}
 user_rooms = {}
+user_sockets = {}  # device_id -> [socket_ids]
 
 def cleanup_inactive_users():
     """Delete users inactive for more than 2 days and their associated files"""
@@ -161,7 +162,7 @@ def run_cleanup_scheduler():
 cleanup_thread = threading.Thread(target=run_cleanup_scheduler, daemon=True)
 cleanup_thread.start()
 
-# HTTP Routes - SERVE FILES FROM ROOT
+# HTTP Routes
 @app.route('/')
 def index():
     """Serve the user chat interface"""
@@ -186,15 +187,33 @@ def admin_login():
     return '''
     <!DOCTYPE html>
     <html>
-    <head><title>Admin Login</title></head>
+    <head>
+        <title>Admin Login</title>
+        <style>
+            body { font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); height: 100vh; display: flex; justify-content: center; align-items: center; }
+            .login-box { background: white; padding: 40px; border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); text-align: center; }
+            h1 { color: #333; margin-bottom: 30px; }
+            input[type="password"] { width: 100%; padding: 15px; margin: 15px 0; border: 2px solid #ddd; border-radius: 10px; font-size: 16px; }
+            button { background: #4361ee; color: white; border: none; padding: 15px 40px; border-radius: 10px; font-size: 16px; cursor: pointer; transition: 0.3s; }
+            button:hover { background: #3a0ca3; transform: translateY(-2px); }
+        </style>
+    </head>
     <body>
-        <form method="POST">
-            <input type="password" name="password" placeholder="Admin password" required>
-            <button type="submit">Login</button>
-        </form>
+        <div class="login-box">
+            <h1>🔒 Admin Login</h1>
+            <form method="POST">
+                <input type="password" name="password" placeholder="Enter admin password" required>
+                <button type="submit">Login</button>
+            </form>
+        </div>
     </body>
     </html>
     '''
+
+@app.route('/admin/logout')
+def admin_logout():
+    session.pop('admin_logged_in', None)
+    return redirect('/admin/login')
 
 @app.route('/admin')
 @admin_required
@@ -235,12 +254,17 @@ def get_stats():
         c.execute('SELECT COUNT(*) as total FROM messages WHERE timestamp >= ?', (today_start,))
         today_messages = c.fetchone()[0]
         
+        # Active connections
+        active_connections = len(user_rooms)
+        
         return jsonify({
             'total_users': total_users,
             'active_users': active_users,
             'total_messages': total_messages,
             'total_files': total_files,
             'today_messages': today_messages,
+            'active_connections': active_connections,
+            'admin_connections': len([s for s in admin_sessions if admin_sessions[s].get('authenticated')]),
             'server_time': datetime.now().isoformat()
         })
     finally:
@@ -256,6 +280,18 @@ def manual_cleanup():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
+@app.route('/api/debug/connections')
+@admin_required
+def debug_connections():
+    """Debug endpoint to see active connections"""
+    return jsonify({
+        'admin_sessions': len(admin_sessions),
+        'user_rooms': len(user_rooms),
+        'user_sockets': user_sockets,
+        'admin_authenticated': len([s for s in admin_sessions if admin_sessions[s].get('authenticated')]),
+        'timestamp': datetime.now().isoformat()
+    })
+
 # ==============================================
 # SOCKET.IO EVENTS
 # ==============================================
@@ -263,6 +299,7 @@ def manual_cleanup():
 @socketio.on('connect')
 def handle_connect():
     print(f'✅ Client connected: {request.sid}')
+    emit('connection_established', {'sid': request.sid, 'timestamp': datetime.now().isoformat()})
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -271,11 +308,29 @@ def handle_disconnect():
     
     # Clean up admin session
     if sid in admin_sessions:
+        print(f'🗑️ Removed admin session for {sid}')
         del admin_sessions[sid]
     
     # Clean up user room
     if sid in user_rooms:
+        device_id = user_rooms[sid]
+        
+        # Remove from user_sockets
+        if device_id in user_sockets:
+            if sid in user_sockets[device_id]:
+                user_sockets[device_id].remove(sid)
+            if not user_sockets[device_id]:
+                del user_sockets[device_id]
+        
         del user_rooms[sid]
+        
+        # Notify admins about user disconnection
+        emit('user_disconnected', {
+            'device_id': device_id,
+            'timestamp': datetime.now().isoformat()
+        }, broadcast=True)
+        
+        print(f'🗑️ User {device_id[:8]}... disconnected')
 
 @socketio.on('admin_auth')
 def handle_admin_auth(data):
@@ -283,15 +338,33 @@ def handle_admin_auth(data):
     password = data.get('password')
     sid = request.sid
     
+    print(f'🔐 Admin auth attempt from {sid}')
+    
     if check_admin_password(password):
-        admin_sessions[sid] = True
+        admin_sessions[sid] = {
+            'authenticated': True,
+            'authenticated_at': datetime.now().isoformat(),
+            'last_activity': datetime.now().isoformat()
+        }
+        
+        # Join admin room
+        join_room('admin_room')
+        
         emit('admin_auth_success', {
             'message': 'Authenticated successfully',
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'session_id': sid
         })
+        
         print(f'👑 Admin authenticated: {sid}')
+        
+        # Send initial data
+        handle_get_all_users({})
+        
     else:
+        admin_sessions[sid] = {'authenticated': False}
         emit('admin_auth_failed', {'message': 'Invalid password'})
+        print(f'❌ Admin auth failed: {sid}')
 
 @socketio.on('register_user')
 def handle_register_user(data):
@@ -320,11 +393,13 @@ def handle_register_user(data):
             else:
                 c.execute('UPDATE users SET last_active = ? WHERE device_id = ?',
                          (now, device_id))
+            is_new = False
             print(f'🔄 Updated user: {username} ({device_id[:8]}...)')
         else:
             # Insert new user
             c.execute('INSERT INTO users (device_id, username, last_active) VALUES (?, ?, ?)',
                      (device_id, username, now))
+            is_new = True
             print(f'✅ New user registered: {username} ({device_id[:8]}...)')
         
         conn.commit()
@@ -333,16 +408,34 @@ def handle_register_user(data):
         join_room(device_id)
         user_rooms[request.sid] = device_id
         
+        # Track socket connection
+        if device_id not in user_sockets:
+            user_sockets[device_id] = []
+        if request.sid not in user_sockets[device_id]:
+            user_sockets[device_id].append(request.sid)
+        
+        # Send user registered event to all admins
+        for admin_sid in list(admin_sessions.keys()):
+            if admin_sessions[admin_sid].get('authenticated'):
+                emit('user_connected', {
+                    'device_id': device_id,
+                    'username': username,
+                    'timestamp': now,
+                    'is_new': is_new,
+                    'socket_count': len(user_sockets.get(device_id, []))
+                }, room=admin_sid)
+        
         emit('user_registered', {
             'device_id': device_id, 
             'username': username,
             'timestamp': now,
-            'is_new': not existing_user
+            'is_new': is_new,
+            'message': 'Registration successful'
         })
         
     except Exception as e:
         print(f'❌ Error registering user: {e}')
-        emit('error', {'message': 'Registration failed'})
+        emit('registration_failed', {'message': 'Registration failed: ' + str(e)})
     finally:
         conn.close()
 
@@ -354,6 +447,8 @@ def handle_send_message(data):
     message = data.get('message', '').strip()
     msg_type = data.get('type', 'text')
     
+    print(f'📨 Message from {username} ({device_id[:8]}...): {message[:100]}')
+    
     if not all([device_id, message]):
         emit('error', {'message': 'Missing required fields'})
         return
@@ -362,6 +457,14 @@ def handle_send_message(data):
     c = conn.cursor()
     
     try:
+        # Verify user exists
+        c.execute('SELECT * FROM users WHERE device_id = ?', (device_id,))
+        user = c.fetchone()
+        
+        if not user:
+            emit('error', {'message': 'User not registered'})
+            return
+        
         # Update user activity
         update_user_activity(device_id)
         
@@ -382,13 +485,18 @@ def handle_send_message(data):
             'id': c.lastrowid
         }
         
-        # Send to user's room
+        # Send to user's room (echo back)
         emit('receive_message', message_data, room=device_id)
         
-        # Notify admins
-        emit('new_user_message', message_data, broadcast=True, include_self=False)
+        # Notify all authenticated admins
+        authenticated_admins = [sid for sid in admin_sessions if admin_sessions[sid].get('authenticated')]
+        if authenticated_admins:
+            emit('new_user_message', message_data, room='admin_room')
+            print(f'📢 Sent to {len(authenticated_admins)} admin(s)')
+        else:
+            print('⚠️ No authenticated admins to notify')
         
-        print(f'💬 Message from {username} ({device_id[:8]}...): {message[:50]}...')
+        print(f'✅ Message saved and delivered')
         
     except Exception as e:
         print(f'❌ Error sending message: {e}')
@@ -409,7 +517,7 @@ def handle_admin_message(data):
     
     # Check admin authentication
     sid = request.sid
-    if sid not in admin_sessions or not admin_sessions[sid]:
+    if sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
         emit('error', {'message': 'Unauthorized - Admin access required'})
         return
     
@@ -436,8 +544,8 @@ def handle_admin_message(data):
         # Send to specific user's room
         emit('receive_message', message_data, room=device_id)
         
-        # Also send to admin panel
-        emit('receive_message', message_data, broadcast=True)
+        # Also send to admin room
+        emit('receive_message', message_data, room='admin_room')
         
         print(f'📤 Admin message to {device_id[:8]}...: {message[:50]}...')
         
@@ -463,7 +571,7 @@ def handle_upload_image(data):
     # Check admin authentication if is_admin
     if is_admin:
         sid = request.sid
-        if sid not in admin_sessions or not admin_sessions[sid]:
+        if sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
             emit('error', {'message': 'Unauthorized - Admin access required'})
             return
     
@@ -516,11 +624,12 @@ def handle_upload_image(data):
         if is_admin:
             # Admin sending to user
             emit('receive_message', message_data, room=device_id)
-            emit('receive_message', message_data, broadcast=True)
+            emit('receive_message', message_data, room='admin_room')
         else:
-            # User sending to admin
+            # User sending
             emit('receive_message', message_data, room=device_id)
-            emit('new_user_message', message_data, broadcast=True, include_self=False)
+            # Notify admins
+            emit('new_user_message', message_data, room='admin_room')
         
         print(f'📷 Image uploaded: {unique_filename}')
         
@@ -533,7 +642,7 @@ def handle_get_all_users(data=None):
     """Get all users for admin"""
     # Check admin authentication
     sid = request.sid
-    if sid not in admin_sessions or not admin_sessions[sid]:
+    if sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
         emit('error', {'message': 'Unauthorized - Admin access required'})
         return
     
@@ -559,6 +668,9 @@ def handle_get_all_users(data=None):
             last_active = datetime.fromisoformat(row['last_active']) if row['last_active'] else datetime.now()
             inactive_hours = (datetime.now() - last_active).total_seconds() / 3600
             
+            # Check if user is currently connected
+            is_connected = row['device_id'] in user_sockets and len(user_sockets[row['device_id']]) > 0
+            
             users.append({
                 'device_id': row['device_id'],
                 'username': row['username'] or 'Anonymous',
@@ -567,10 +679,17 @@ def handle_get_all_users(data=None):
                 'last_message': row['last_message'],
                 'message_count': row['message_count'],
                 'inactive_hours': round(inactive_hours, 1),
-                'is_active': inactive_hours < 48  # Active if less than 2 days
+                'is_active': inactive_hours < 48,
+                'is_connected': is_connected,
+                'connection_count': len(user_sockets.get(row['device_id'], []))
             })
         
-        emit('users_list', {'users': users, 'total': len(users), 'timestamp': datetime.now().isoformat()})
+        emit('users_list', {
+            'users': users, 
+            'total': len(users), 
+            'timestamp': datetime.now().isoformat(),
+            'connected_users': len(user_rooms)
+        })
         print(f'📋 Sent users list: {len(users)} users')
         
     except Exception as e:
@@ -644,7 +763,7 @@ def handle_delete_user(data):
     
     # Check admin authentication
     sid = request.sid
-    if sid not in admin_sessions or not admin_sessions[sid]:
+    if sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
         emit('error', {'message': 'Unauthorized - Admin access required'})
         return
     
@@ -671,6 +790,13 @@ def handle_delete_user(data):
         conn.commit()
         conn.close()
         
+        # Remove from active connections
+        if device_id in user_sockets:
+            for socket_id in user_sockets[device_id]:
+                if socket_id in user_rooms:
+                    del user_rooms[socket_id]
+            del user_sockets[device_id]
+        
         print(f"🗑️ Admin deleted user: {device_id}")
         emit('user_deleted', {'device_id': device_id, 'success': True})
         
@@ -681,7 +807,26 @@ def handle_delete_user(data):
         print(f'❌ Error deleting user: {e}')
         emit('error', {'message': 'Failed to delete user'})
 
+@socketio.on('heartbeat')
+def handle_heartbeat(data):
+    """Handle client heartbeat"""
+    sid = request.sid
+    device_id = data.get('device_id')
+    
+    if device_id and sid in user_rooms:
+        # Update user activity
+        update_user_activity(device_id)
+        admin_sessions[sid] = admin_sessions.get(sid, {})
+        admin_sessions[sid]['last_activity'] = datetime.now().isoformat()
+        
+        emit('heartbeat_ack', {
+            'timestamp': datetime.now().isoformat(),
+            'status': 'ok'
+        })
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f'🚀 Server starting on port {port}')
+    print(f'🔑 Admin password: {app.config["ADMIN_PASSWORD"]}')
+    print(f'📁 Upload folder: {app.config["UPLOAD_FOLDER"]}')
     socketio.run(app, host='0.0.0.0', port=port, debug=True, allow_unsafe_werkzeug=True)
