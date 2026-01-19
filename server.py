@@ -1,35 +1,42 @@
-from flask import Flask, send_from_directory, jsonify, request, session, redirect, url_for
-from flask_socketio import SocketIO, emit, join_room, disconnect
-from flask_cors import CORS
-import sqlite3
 import os
+import sqlite3
 import base64
-from datetime import datetime, timedelta
 import uuid
 import threading
 import time
 import hashlib
+from datetime import datetime, timedelta
 from functools import wraps
 
-app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your-secret-key-change-this-in-production'
-app.config['ADMIN_PASSWORD'] = 'flexia123'  # CHANGE THIS IN PRODUCTION!
-app.config['ADMIN_PASSWORD_HASH'] = hashlib.sha256('flexia123'.encode()).hexdigest()
+from flask import Flask, send_from_directory, jsonify, request, session, redirect, url_for
+from flask_socketio import SocketIO, emit, join_room
+from flask_cors import CORS
+
+# Initialize Flask app
+app = Flask(__name__, static_folder='static', static_url_path='')
+
+# Configuration
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+app.config['ADMIN_PASSWORD'] = os.environ.get('ADMIN_PASSWORD', 'flexia123')
+app.config['ADMIN_PASSWORD_HASH'] = hashlib.sha256(app.config['ADMIN_PASSWORD'].encode()).hexdigest()
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=8)
-CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", logger=True, engineio_logger=True)
 
 # File upload configuration
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# In-memory storage for admin sessions (for SocketIO)
-admin_sessions = {}
-user_rooms = {}
+# Enable CORS and SocketIO
+CORS(app)
+socketio = SocketIO(app, 
+                   cors_allowed_origins="*", 
+                   logger=True, 
+                   engineio_logger=True,
+                   async_mode='eventlet')
 
 # Database setup
 def init_db():
+    """Initialize database with tables"""
     conn = sqlite3.connect('flexia_chat.db')
     c = conn.cursor()
     
@@ -64,14 +71,6 @@ def init_db():
         FOREIGN KEY (device_id) REFERENCES users(device_id) ON DELETE CASCADE
     )''')
     
-    # Admin sessions table (optional, for persistence)
-    c.execute('''CREATE TABLE IF NOT EXISTS admin_sessions (
-        session_id TEXT PRIMARY KEY,
-        ip_address TEXT,
-        login_time TIMESTAMP,
-        last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    
     conn.commit()
     conn.close()
 
@@ -79,6 +78,7 @@ init_db()
 
 # Helper functions
 def get_db():
+    """Get database connection"""
     conn = sqlite3.connect('flexia_chat.db')
     conn.row_factory = sqlite3.Row
     return conn
@@ -162,23 +162,22 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-def socket_admin_required(f):
-    @wraps(f)
-    def decorated_function(data):
-        sid = request.sid
-        if sid not in admin_sessions or not admin_sessions[sid]:
-            emit('error', {'message': 'Unauthorized - Admin access required'})
-            return
-        return f(data)
-    return decorated_function
+# In-memory storage for admin sessions
+admin_sessions = {}
+user_rooms = {}
 
-# HTTP Routes
+# ==============================================
+# HTTP ROUTES
+# ==============================================
+
 @app.route('/')
 def index():
-    return send_from_directory('.', 'index.html')
+    """Serve the user chat interface"""
+    return send_from_directory('static', 'index.html')
 
 @app.route('/admin/login', methods=['GET', 'POST'])
 def admin_login():
+    """Admin login page"""
     if request.method == 'POST':
         password = request.form.get('password')
         
@@ -190,129 +189,91 @@ def admin_login():
             return redirect(url_for('admin_panel'))
         else:
             return '''
-                <script>
-                    alert("Incorrect password!");
-                    window.location.href = "/admin/login";
-                </script>
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Login Failed</title>
+                    <script>
+                        alert("Incorrect password!");
+                        window.location.href = "/admin/login";
+                    </script>
+                </head>
+                <body>
+                    <p>Redirecting...</p>
+                </body>
+                </html>
             '''
     
+    # Return login page
     return '''
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Flexia Merchant - Admin Login</title>
+        <title>Flexia Merchant • Admin Login</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
             body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                height: 100vh;
+                min-height: 100vh;
                 display: flex;
                 justify-content: center;
                 align-items: center;
-                margin: 0;
+                padding: 20px;
             }
             .login-container {
                 background: white;
                 padding: 40px;
-                border-radius: 15px;
+                border-radius: 20px;
                 box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-                width: 350px;
+                width: 100%;
+                max-width: 400px;
                 text-align: center;
             }
-            h1 {
-                color: #333;
-                margin-bottom: 10px;
-                font-size: 24px;
-            }
-            .subtitle {
-                color: #666;
-                margin-bottom: 30px;
-                font-size: 14px;
-            }
-            .input-group {
-                margin-bottom: 20px;
-                text-align: left;
-            }
-            label {
-                display: block;
-                margin-bottom: 5px;
-                color: #555;
-                font-weight: 500;
-            }
+            .logo { font-size: 48px; margin-bottom: 20px; color: #667eea; }
+            h1 { color: #333; margin-bottom: 10px; font-size: 24px; }
+            .subtitle { color: #666; margin-bottom: 30px; font-size: 14px; }
+            .input-group { margin-bottom: 20px; text-align: left; }
+            label { display: block; margin-bottom: 8px; color: #555; font-weight: 500; }
             input[type="password"] {
-                width: 100%;
-                padding: 12px 15px;
-                border: 2px solid #e0e0e0;
-                border-radius: 8px;
-                font-size: 16px;
-                box-sizing: border-box;
-                transition: border-color 0.3s;
+                width: 100%; padding: 15px; border: 2px solid #e0e0e0;
+                border-radius: 10px; font-size: 16px; transition: all 0.3s;
             }
             input[type="password"]:focus {
-                outline: none;
-                border-color: #667eea;
+                outline: none; border-color: #667eea;
+                box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
             }
             button {
-                width: 100%;
-                padding: 14px;
+                width: 100%; padding: 16px;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                border: none;
-                border-radius: 8px;
-                font-size: 16px;
-                font-weight: 600;
-                cursor: pointer;
-                transition: transform 0.2s, box-shadow 0.2s;
+                color: white; border: none; border-radius: 10px;
+                font-size: 16px; font-weight: 600; cursor: pointer;
+                transition: all 0.3s; margin-top: 10px;
             }
             button:hover {
                 transform: translateY(-2px);
                 box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
             }
-            button:active {
-                transform: translateY(0);
-            }
-            .logo {
-                font-size: 32px;
-                margin-bottom: 20px;
-                color: #667eea;
-            }
-            .error {
-                color: #ff4757;
-                font-size: 14px;
-                margin-top: 10px;
-                display: none;
-            }
-            .footer {
-                margin-top: 30px;
-                font-size: 12px;
-                color: #888;
-            }
+            .footer { margin-top: 30px; font-size: 12px; color: #888; }
+            .error { color: #ff4757; font-size: 14px; margin-top: 10px; }
         </style>
-        <script>
-            function validateForm() {
-                const password = document.getElementById('password').value;
-                if (password.length < 4) {
-                    document.getElementById('error').style.display = 'block';
-                    return false;
-                }
-                document.getElementById('error').style.display = 'none';
-                return true;
-            }
-        </script>
     </head>
     <body>
         <div class="login-container">
             <div class="logo">🔒</div>
             <h1>Flexia Merchant Admin</h1>
             <p class="subtitle">Secure administration panel</p>
-            <form method="POST" onsubmit="return validateForm()">
+            
+            <form method="POST">
                 <div class="input-group">
                     <label for="password">Admin Password</label>
-                    <input type="password" id="password" name="password" placeholder="Enter your password" required autofocus>
-                    <div id="error" class="error">Password must be at least 4 characters</div>
+                    <input type="password" id="password" name="password" 
+                           placeholder="Enter admin password" required autofocus>
                 </div>
                 <button type="submit">Login to Admin Panel</button>
             </form>
+            
             <div class="footer">
                 &copy; 2024 Flexia Merchant Chat System
             </div>
@@ -323,16 +284,19 @@ def admin_login():
 
 @app.route('/admin/logout')
 def admin_logout():
+    """Logout admin"""
     session.pop('admin_logged_in', None)
     return redirect(url_for('admin_login'))
 
 @app.route('/admin')
 @admin_required
 def admin_panel():
-    return send_from_directory('.', 'admin.html')
+    """Serve the admin panel"""
+    return send_from_directory('static', 'admin.html')
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
+    """Serve uploaded files"""
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 @app.route('/api/cleanup', methods=['POST'])
@@ -377,21 +341,10 @@ def get_stats():
             'total_messages': total_messages,
             'total_files': total_files,
             'today_messages': today_messages,
-            'server_time': datetime.now().isoformat(),
-            'upload_folder_size': get_folder_size(app.config['UPLOAD_FOLDER'])
+            'server_time': datetime.now().isoformat()
         })
     finally:
         conn.close()
-
-def get_folder_size(folder):
-    """Calculate folder size in MB"""
-    total_size = 0
-    for dirpath, dirnames, filenames in os.walk(folder):
-        for f in filenames:
-            fp = os.path.join(dirpath, f)
-            if os.path.exists(fp):
-                total_size += os.path.getsize(fp)
-    return round(total_size / (1024 * 1024), 2)  # MB
 
 @app.route('/api/health')
 def health_check():
@@ -399,16 +352,17 @@ def health_check():
     return jsonify({
         'status': 'ok',
         'timestamp': datetime.now().isoformat(),
-        'upload_folder': os.path.exists(app.config['UPLOAD_FOLDER']),
-        'database': os.path.exists('flexia_chat.db'),
-        'active_connections': len(user_rooms)
+        'service': 'Flexia Merchant Chat',
+        'version': '2.0.0'
     })
 
-# Socket.IO Events
+# ==============================================
+# SOCKET.IO EVENTS
+# ==============================================
+
 @socketio.on('connect')
 def handle_connect():
     print(f'✅ Client connected: {request.sid}')
-    user_rooms[request.sid] = None
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -675,7 +629,7 @@ def handle_upload_image(data):
         emit('error', {'message': 'Image upload failed'})
 
 @socketio.on('get_all_users')
-def handle_get_all_users(data):
+def handle_get_all_users(data=None):
     """Get all users for admin"""
     # Check admin authentication
     sid = request.sid
@@ -827,7 +781,12 @@ def handle_delete_user(data):
         print(f'❌ Error deleting user: {e}')
         emit('error', {'message': 'Failed to delete user'})
 
+# ==============================================
+# APPLICATION STARTUP
+# ==============================================
+
 if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
     print('🚀 Starting Flexia Merchant Chat Server...')
     print('=' * 50)
     print(f'📁 Upload folder: {os.path.abspath(UPLOAD_FOLDER)}')
@@ -836,8 +795,12 @@ if __name__ == '__main__':
     print('📊 Cleanup scheduler active (runs every hour)')
     print('🗑️ Users inactive for 2+ days will be auto-deleted')
     print('=' * 50)
-    print('🌐 User Chat: http://localhost:5000')
-    print('👑 Admin Panel: http://localhost:5000/admin/login')
+    print(f'🌐 User Chat: http://localhost:{port}')
+    print(f'👑 Admin Panel: http://localhost:{port}/admin/login')
     print('=' * 50)
     
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
+    socketio.run(app, 
+                 host='0.0.0.0', 
+                 port=port, 
+                 debug=True, 
+                 allow_unsafe_werkzeug=True)
