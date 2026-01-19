@@ -175,7 +175,7 @@ def socket_admin_required(f):
 # HTTP Routes
 @app.route('/')
 def index():
-    return send_from_directory('.', 'user_chat.html')
+    return send_from_directory('.', 'index.html')
 
 @app.route('/admin/login', methods=['GET', 'POST'])
 def admin_login():
