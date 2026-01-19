@@ -1,737 +1,843 @@
-from flask import Flask, render_template, request, jsonify, send_from_directory
-from flask_socketio import SocketIO, emit, join_room
+from flask import Flask, send_from_directory, jsonify, request, session, redirect, url_for
+from flask_socketio import SocketIO, emit, join_room, disconnect
 from flask_cors import CORS
-import uuid
-import os
-from datetime import datetime, timedelta
-import json
-import eventlet
-import base64
-from PIL import Image
-import io
 import sqlite3
-from contextlib import contextmanager
-import logging
-import atexit
+import os
+import base64
+from datetime import datetime, timedelta
+import uuid
+import threading
+import time
+import hashlib
+from functools import wraps
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-eventlet.monkey_patch()
-
-app = Flask(__name__, static_folder='static', template_folder='templates')
-
-# Configuration for Render
-if 'RENDER' in os.environ:
-    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'production-secret-key-change-in-render')
-    app.config['UPLOAD_FOLDER'] = '/opt/render/project/src/uploads'
-    admin_password = os.environ.get('ADMIN_PASSWORD', 'admin123')
-else:
-    app.config['SECRET_KEY'] = 'development-secret-key-change-this'
-    app.config['UPLOAD_FOLDER'] = 'uploads'
-    admin_password = '123456'
-
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
-
-# Create uploads directory if it doesn't exist
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'your-secret-key-change-this-in-production'
+app.config['ADMIN_PASSWORD'] = 'flexia123'  # CHANGE THIS IN PRODUCTION!
+app.config['ADMIN_PASSWORD_HASH'] = hashlib.sha256('flexia123'.encode()).hexdigest()
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=8)
 CORS(app)
-socketio = SocketIO(app, 
-                   cors_allowed_origins="*", 
-                   async_mode='eventlet',
-                   logger=True,
-                   engineio_logger=True)
+socketio = SocketIO(app, cors_allowed_origins="*", logger=True, engineio_logger=True)
+
+# File upload configuration
+UPLOAD_FOLDER = 'uploads'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# In-memory storage for admin sessions (for SocketIO)
+admin_sessions = {}
+user_rooms = {}
 
 # Database setup
-DATABASE_PATH = 'chat_app.db'
-
-def init_database():
-    """Initialize the database with tables"""
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        
-        # Users table
-        c.execute('''CREATE TABLE IF NOT EXISTS users
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      device_id TEXT UNIQUE NOT NULL,
-                      username TEXT NOT NULL,
-                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                      expires_at TIMESTAMP,
-                      last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                      is_active BOOLEAN DEFAULT 1,
-                      message_count INTEGER DEFAULT 0)''')
-        
-        # Messages table
-        c.execute('''CREATE TABLE IF NOT EXISTS messages
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      message_id TEXT UNIQUE NOT NULL,
-                      device_id TEXT NOT NULL,
-                      sender TEXT NOT NULL,
-                      message TEXT NOT NULL,
-                      message_type TEXT DEFAULT 'text',
-                      timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                      is_admin BOOLEAN DEFAULT 0,
-                      is_read BOOLEAN DEFAULT 0)''')
-        
-        # Files table for uploaded images
-        c.execute('''CREATE TABLE IF NOT EXISTS files
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      file_id TEXT UNIQUE NOT NULL,
-                      filename TEXT NOT NULL,
-                      filepath TEXT NOT NULL,
-                      device_id TEXT NOT NULL,
-                      upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                      file_size INTEGER,
-                      mime_type TEXT)''')
-        
-        # Create indexes for better performance
-        c.execute('CREATE INDEX IF NOT EXISTS idx_users_device_id ON users(device_id)')
-        c.execute('CREATE INDEX IF NOT EXISTS idx_users_expires_at ON users(expires_at)')
-        c.execute('CREATE INDEX IF NOT EXISTS idx_messages_device_id ON messages(device_id)')
-        c.execute('CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)')
-        c.execute('CREATE INDEX IF NOT EXISTS idx_files_device_id ON files(device_id)')
-        
-        conn.commit()
-    logger.info("✅ Database initialized successfully")
-
-@contextmanager
-def get_db_connection():
-    """Get database connection with automatic cleanup"""
-    conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row  # Return rows as dictionaries
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-# Initialize database on startup
-init_database()
-
-# Cleanup function for expired users
-def cleanup_expired_users():
-    """Remove expired users and their data"""
-    try:
-        with get_db_connection() as conn:
-            c = conn.cursor()
-            
-            # Find expired users
-            c.execute("SELECT device_id FROM users WHERE expires_at <= datetime('now')")
-            expired_users = [row['device_id'] for row in c.fetchall()]
-            
-            if expired_users:
-                # Delete messages
-                c.execute("DELETE FROM messages WHERE device_id IN ({})".format(
-                    ','.join(['?'] * len(expired_users))
-                ), expired_users)
-                
-                # Delete files records (actual files remain in uploads folder)
-                c.execute("DELETE FROM files WHERE device_id IN ({})".format(
-                    ','.join(['?'] * len(expired_users))
-                ), expired_users)
-                
-                # Delete users
-                c.execute("DELETE FROM users WHERE device_id IN ({})".format(
-                    ','.join(['?'] * len(expired_users))
-                ), expired_users)
-                
-                conn.commit()
-                logger.info(f"✅ Cleaned up {len(expired_users)} expired users")
+def init_db():
+    conn = sqlite3.connect('flexia_chat.db')
+    c = conn.cursor()
     
-    except Exception as e:
-        logger.error(f"❌ Error cleaning up expired users: {str(e)}")
+    # Users table
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id TEXT UNIQUE NOT NULL,
+        username TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    
+    # Messages table
+    c.execute('''CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id TEXT NOT NULL,
+        sender TEXT NOT NULL,
+        message TEXT NOT NULL,
+        type TEXT DEFAULT 'text',
+        is_admin BOOLEAN DEFAULT 0,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (device_id) REFERENCES users(device_id) ON DELETE CASCADE
+    )''')
+    
+    # Files table
+    c.execute('''CREATE TABLE IF NOT EXISTS uploaded_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        filepath TEXT NOT NULL,
+        uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (device_id) REFERENCES users(device_id) ON DELETE CASCADE
+    )''')
+    
+    # Admin sessions table (optional, for persistence)
+    c.execute('''CREATE TABLE IF NOT EXISTS admin_sessions (
+        session_id TEXT PRIMARY KEY,
+        ip_address TEXT,
+        login_time TIMESTAMP,
+        last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    
+    conn.commit()
+    conn.close()
 
-# Run cleanup on startup
-cleanup_expired_users()
+init_db()
 
-# Routes
+# Helper functions
+def get_db():
+    conn = sqlite3.connect('flexia_chat.db')
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def check_admin_password(password):
+    """Check admin password against hash"""
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    return password_hash == app.config['ADMIN_PASSWORD_HASH']
+
+def update_user_activity(device_id):
+    """Update last_active timestamp for a user"""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute('UPDATE users SET last_active = ? WHERE device_id = ?', 
+              (datetime.now().isoformat(), device_id))
+    conn.commit()
+    conn.close()
+
+def cleanup_inactive_users():
+    """Delete users inactive for more than 2 days and their associated files"""
+    conn = get_db()
+    c = conn.cursor()
+    
+    # Calculate cutoff time (2 days ago)
+    cutoff_time = datetime.now() - timedelta(days=2)
+    
+    # Get inactive users
+    c.execute('SELECT device_id FROM users WHERE last_active < ?', (cutoff_time.isoformat(),))
+    inactive_users = c.fetchall()
+    
+    deleted_count = 0
+    for user in inactive_users:
+        device_id = user[0]
+        
+        # Get all files for this user
+        c.execute('SELECT filepath FROM uploaded_files WHERE device_id = ?', (device_id,))
+        files = c.fetchall()
+        
+        # Delete physical files
+        for file_row in files:
+            filepath = file_row[0]
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                    print(f"🗑️ Deleted file: {filepath}")
+                except Exception as e:
+                    print(f"❌ Error deleting file {filepath}: {e}")
+        
+        # Delete user (CASCADE will delete messages and file records)
+        c.execute('DELETE FROM users WHERE device_id = ?', (device_id,))
+        print(f"🗑️ Deleted inactive user: {device_id}")
+        deleted_count += 1
+    
+    conn.commit()
+    conn.close()
+    
+    if deleted_count > 0:
+        print(f"✅ Cleaned up {deleted_count} inactive users")
+    
+    return deleted_count
+
+def run_cleanup_scheduler():
+    """Run cleanup every hour"""
+    while True:
+        time.sleep(3600)  # Wait 1 hour
+        try:
+            cleanup_inactive_users()
+        except Exception as e:
+            print(f"❌ Cleanup error: {e}")
+
+# Start cleanup thread
+cleanup_thread = threading.Thread(target=run_cleanup_scheduler, daemon=True)
+cleanup_thread.start()
+
+# Authentication decorators
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('admin_logged_in'):
+            return redirect(url_for('admin_login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def socket_admin_required(f):
+    @wraps(f)
+    def decorated_function(data):
+        sid = request.sid
+        if sid not in admin_sessions or not admin_sessions[sid]:
+            emit('error', {'message': 'Unauthorized - Admin access required'})
+            return
+        return f(data)
+    return decorated_function
+
+# HTTP Routes
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return send_from_directory('.', 'user_chat.html')
 
-@app.route('/<password>.html')
-def admin_page(password):
-    if password == admin_password:
-        return render_template('admin.html')
-    return "Invalid password", 403
+@app.route('/admin/login', methods=['GET', 'POST'])
+def admin_login():
+    if request.method == 'POST':
+        password = request.form.get('password')
+        
+        if check_admin_password(password):
+            session['admin_logged_in'] = True
+            session['admin_ip'] = request.remote_addr
+            session['admin_login_time'] = datetime.now().isoformat()
+            session.permanent = True
+            return redirect(url_for('admin_panel'))
+        else:
+            return '''
+                <script>
+                    alert("Incorrect password!");
+                    window.location.href = "/admin/login";
+                </script>
+            '''
+    
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Flexia Merchant - Admin Login</title>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                height: 100vh;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                margin: 0;
+            }
+            .login-container {
+                background: white;
+                padding: 40px;
+                border-radius: 15px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                width: 350px;
+                text-align: center;
+            }
+            h1 {
+                color: #333;
+                margin-bottom: 10px;
+                font-size: 24px;
+            }
+            .subtitle {
+                color: #666;
+                margin-bottom: 30px;
+                font-size: 14px;
+            }
+            .input-group {
+                margin-bottom: 20px;
+                text-align: left;
+            }
+            label {
+                display: block;
+                margin-bottom: 5px;
+                color: #555;
+                font-weight: 500;
+            }
+            input[type="password"] {
+                width: 100%;
+                padding: 12px 15px;
+                border: 2px solid #e0e0e0;
+                border-radius: 8px;
+                font-size: 16px;
+                box-sizing: border-box;
+                transition: border-color 0.3s;
+            }
+            input[type="password"]:focus {
+                outline: none;
+                border-color: #667eea;
+            }
+            button {
+                width: 100%;
+                padding: 14px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 16px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: transform 0.2s, box-shadow 0.2s;
+            }
+            button:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+            }
+            button:active {
+                transform: translateY(0);
+            }
+            .logo {
+                font-size: 32px;
+                margin-bottom: 20px;
+                color: #667eea;
+            }
+            .error {
+                color: #ff4757;
+                font-size: 14px;
+                margin-top: 10px;
+                display: none;
+            }
+            .footer {
+                margin-top: 30px;
+                font-size: 12px;
+                color: #888;
+            }
+        </style>
+        <script>
+            function validateForm() {
+                const password = document.getElementById('password').value;
+                if (password.length < 4) {
+                    document.getElementById('error').style.display = 'block';
+                    return false;
+                }
+                document.getElementById('error').style.display = 'none';
+                return true;
+            }
+        </script>
+    </head>
+    <body>
+        <div class="login-container">
+            <div class="logo">🔒</div>
+            <h1>Flexia Merchant Admin</h1>
+            <p class="subtitle">Secure administration panel</p>
+            <form method="POST" onsubmit="return validateForm()">
+                <div class="input-group">
+                    <label for="password">Admin Password</label>
+                    <input type="password" id="password" name="password" placeholder="Enter your password" required autofocus>
+                    <div id="error" class="error">Password must be at least 4 characters</div>
+                </div>
+                <button type="submit">Login to Admin Panel</button>
+            </form>
+            <div class="footer">
+                &copy; 2024 Flexia Merchant Chat System
+            </div>
+        </div>
+    </body>
+    </html>
+    '''
+
+@app.route('/admin/logout')
+def admin_logout():
+    session.pop('admin_logged_in', None)
+    return redirect(url_for('admin_login'))
+
+@app.route('/admin')
+@admin_required
+def admin_panel():
+    return send_from_directory('.', 'admin.html')
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-@app.route('/health')
-def health_check():
-    """Health check endpoint for Render"""
+@app.route('/api/cleanup', methods=['POST'])
+@admin_required
+def manual_cleanup():
+    """Manual cleanup endpoint"""
     try:
-        with get_db_connection() as conn:
-            c = conn.cursor()
-            c.execute("SELECT 1")
-        db_status = 'healthy'
-    except:
-        db_status = 'unhealthy'
-    
-    return jsonify({
-        'status': 'running',
-        'timestamp': datetime.now().isoformat(),
-        'database': db_status,
-        'users_count': get_total_users_count(),
-        'messages_count': get_total_messages_count()
-    })
+        count = cleanup_inactive_users()
+        return jsonify({'success': True, 'message': f'Cleanup completed. Deleted {count} users.'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/stats')
+@admin_required
 def get_stats():
-    """Get application statistics"""
-    if not request.args.get('admin') == admin_password:
-        return jsonify({'error': 'Unauthorized'}), 401
+    """Get system statistics"""
+    conn = get_db()
+    c = conn.cursor()
     
-    with get_db_connection() as conn:
-        c = conn.cursor()
+    try:
+        c.execute('SELECT COUNT(*) as total FROM users')
+        total_users = c.fetchone()[0]
         
-        # Get user statistics
-        c.execute("""
-            SELECT 
-                COUNT(*) as total_users,
-                SUM(CASE WHEN expires_at > datetime('now') THEN 1 ELSE 0 END) as active_users,
-                SUM(message_count) as total_messages,
-                COUNT(CASE WHEN datetime(last_active) > datetime('now', '-1 hour') THEN 1 END) as online_now
-            FROM users
-        """)
-        stats = dict(c.fetchone())
+        c.execute('SELECT COUNT(*) as total FROM messages')
+        total_messages = c.fetchone()[0]
         
-        # Get daily messages
-        c.execute("""
-            SELECT 
-                DATE(timestamp) as date,
-                COUNT(*) as count
-            FROM messages
-            WHERE timestamp > datetime('now', '-7 days')
-            GROUP BY DATE(timestamp)
-            ORDER BY date DESC
-        """)
-        daily_messages = [dict(row) for row in c.fetchall()]
+        cutoff = (datetime.now() - timedelta(days=2)).isoformat()
+        c.execute('SELECT COUNT(*) as total FROM users WHERE last_active >= ?', (cutoff,))
+        active_users = c.fetchone()[0]
         
-        # Get recent users
-        c.execute("""
-            SELECT 
-                device_id,
-                username,
-                created_at,
-                last_active,
-                message_count
-            FROM users
-            WHERE expires_at > datetime('now')
-            ORDER BY last_active DESC
-            LIMIT 10
-        """)
-        recent_users = [dict(row) for row in c.fetchall()]
-    
+        c.execute('SELECT COUNT(*) as total FROM uploaded_files')
+        total_files = c.fetchone()[0]
+        
+        # Today's activity
+        today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        c.execute('SELECT COUNT(*) as total FROM messages WHERE timestamp >= ?', (today_start,))
+        today_messages = c.fetchone()[0]
+        
+        return jsonify({
+            'total_users': total_users,
+            'active_users': active_users,
+            'total_messages': total_messages,
+            'total_files': total_files,
+            'today_messages': today_messages,
+            'server_time': datetime.now().isoformat(),
+            'upload_folder_size': get_folder_size(app.config['UPLOAD_FOLDER'])
+        })
+    finally:
+        conn.close()
+
+def get_folder_size(folder):
+    """Calculate folder size in MB"""
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(folder):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            if os.path.exists(fp):
+                total_size += os.path.getsize(fp)
+    return round(total_size / (1024 * 1024), 2)  # MB
+
+@app.route('/api/health')
+def health_check():
+    """Health check endpoint"""
     return jsonify({
-        'stats': stats,
-        'daily_messages': daily_messages,
-        'recent_users': recent_users
+        'status': 'ok',
+        'timestamp': datetime.now().isoformat(),
+        'upload_folder': os.path.exists(app.config['UPLOAD_FOLDER']),
+        'database': os.path.exists('flexia_chat.db'),
+        'active_connections': len(user_rooms)
     })
 
-# Helper functions
-def get_total_users_count():
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM users WHERE expires_at > datetime('now')")
-        return c.fetchone()[0]
+# Socket.IO Events
+@socketio.on('connect')
+def handle_connect():
+    print(f'✅ Client connected: {request.sid}')
+    user_rooms[request.sid] = None
 
-def get_total_messages_count():
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM messages")
-        return c.fetchone()[0]
-
-def create_or_get_user(device_id, ip_address=None, user_agent=None):
-    """Get existing user or create new one"""
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        
-        # Check if user exists and is not expired
-        c.execute("""
-            SELECT * FROM users 
-            WHERE device_id = ? AND expires_at > datetime('now')
-        """, (device_id,))
-        
-        user = c.fetchone()
-        
-        if user:
-            # Update last active
-            c.execute("""
-                UPDATE users 
-                SET last_active = CURRENT_TIMESTAMP 
-                WHERE device_id = ?
-            """, (device_id,))
-            conn.commit()
-            return dict(user)
-        else:
-            # Create new user
-            username = f"User_{device_id[:8]}"
-            expires_at = datetime.now() + timedelta(days=7)
-            
-            c.execute("""
-                INSERT OR REPLACE INTO users 
-                (device_id, username, created_at, expires_at, last_active, is_active)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                device_id,
-                username,
-                datetime.now().isoformat(),
-                expires_at.isoformat(),
-                datetime.now().isoformat(),
-                1
-            ))
-            conn.commit()
-            
-            return {
-                'device_id': device_id,
-                'username': username,
-                'created_at': datetime.now().isoformat(),
-                'expires_at': expires_at.isoformat(),
-                'last_active': datetime.now().isoformat(),
-                'is_active': True,
-                'message_count': 0
-            }
-
-def save_message(device_id, sender, message, message_type='text', is_admin=False):
-    """Save message to database"""
-    message_id = str(uuid.uuid4())
+@socketio.on('disconnect')
+def handle_disconnect():
+    sid = request.sid
+    print(f'🔌 Client disconnected: {sid}')
     
-    with get_db_connection() as conn:
-        c = conn.cursor()
+    # Clean up admin session
+    if sid in admin_sessions:
+        del admin_sessions[sid]
+    
+    # Clean up user room
+    if sid in user_rooms:
+        del user_rooms[sid]
+
+@socketio.on('admin_auth')
+def handle_admin_auth(data):
+    """Authenticate admin via SocketIO"""
+    password = data.get('password')
+    sid = request.sid
+    
+    if check_admin_password(password):
+        admin_sessions[sid] = True
+        emit('admin_auth_success', {
+            'message': 'Authenticated successfully',
+            'timestamp': datetime.now().isoformat()
+        })
+        print(f'👑 Admin authenticated: {sid}')
+    else:
+        emit('admin_auth_failed', {'message': 'Invalid password'})
+
+@socketio.on('register_user')
+def handle_register_user(data):
+    """Register or update user with persistent device_id"""
+    device_id = data.get('device_id')
+    username = data.get('username', 'Anonymous')
+    
+    if not device_id:
+        emit('error', {'message': 'Device ID required'})
+        return
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    try:
+        # Check if user exists
+        c.execute('SELECT * FROM users WHERE device_id = ?', (device_id,))
+        existing_user = c.fetchone()
         
-        # Save message
-        c.execute("""
-            INSERT INTO messages 
-            (message_id, device_id, sender, message, message_type, timestamp, is_admin)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            message_id,
-            device_id,
-            sender,
-            message,
-            message_type,
-            datetime.now().isoformat(),
-            1 if is_admin else 0
-        ))
-        
-        # Update user's message count
-        c.execute("""
-            UPDATE users 
-            SET message_count = message_count + 1,
-                last_active = CURRENT_TIMESTAMP
-            WHERE device_id = ?
-        """, (device_id,))
+        now = datetime.now().isoformat()
+        if existing_user:
+            # Update existing user
+            if username != 'Anonymous':
+                c.execute('UPDATE users SET username = ?, last_active = ? WHERE device_id = ?',
+                         (username, now, device_id))
+            else:
+                c.execute('UPDATE users SET last_active = ? WHERE device_id = ?',
+                         (now, device_id))
+            print(f'🔄 Updated user: {username} ({device_id[:8]}...)')
+        else:
+            # Insert new user
+            c.execute('INSERT INTO users (device_id, username, last_active) VALUES (?, ?, ?)',
+                     (device_id, username, now))
+            print(f'✅ New user registered: {username} ({device_id[:8]}...)')
         
         conn.commit()
-    
-    return message_id
+        
+        # Join room for this device
+        join_room(device_id)
+        user_rooms[request.sid] = device_id
+        
+        emit('user_registered', {
+            'device_id': device_id, 
+            'username': username,
+            'timestamp': now,
+            'is_new': not existing_user
+        })
+        
+    except Exception as e:
+        print(f'❌ Error registering user: {e}')
+        emit('error', {'message': 'Registration failed'})
+    finally:
+        conn.close()
 
-def get_user_messages(device_id, limit=50):
-    """Get messages for a user"""
-    with get_db_connection() as conn:
+@socketio.on('send_message')
+def handle_send_message(data):
+    """Handle user message"""
+    device_id = data.get('device_id')
+    username = data.get('username', 'Anonymous')
+    message = data.get('message', '').strip()
+    msg_type = data.get('type', 'text')
+    
+    if not all([device_id, message]):
+        emit('error', {'message': 'Missing required fields'})
+        return
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    try:
+        # Update user activity
+        update_user_activity(device_id)
+        
+        # Save message
+        timestamp = datetime.now().isoformat()
+        c.execute('''INSERT INTO messages (device_id, sender, message, type, is_admin, timestamp)
+                     VALUES (?, ?, ?, ?, ?, ?)''',
+                  (device_id, username, message, msg_type, False, timestamp))
+        conn.commit()
+        
+        message_data = {
+            'device_id': device_id,
+            'sender': username,
+            'message': message,
+            'type': msg_type,
+            'is_admin': False,
+            'timestamp': timestamp,
+            'id': c.lastrowid
+        }
+        
+        # Send to user's room
+        emit('receive_message', message_data, room=device_id)
+        
+        # Notify admins
+        emit('new_user_message', message_data, broadcast=True, include_self=False)
+        
+        print(f'💬 Message from {username} ({device_id[:8]}...): {message[:50]}...')
+        
+    except Exception as e:
+        print(f'❌ Error sending message: {e}')
+        emit('error', {'message': 'Failed to send message'})
+    finally:
+        conn.close()
+
+@socketio.on('admin_message')
+def handle_admin_message(data):
+    """Handle admin message to user"""
+    device_id = data.get('device_id')
+    message = data.get('message', '').strip()
+    msg_type = data.get('type', 'text')
+    
+    if not all([device_id, message]):
+        emit('error', {'message': 'Missing required fields'})
+        return
+    
+    # Check admin authentication
+    sid = request.sid
+    if sid not in admin_sessions or not admin_sessions[sid]:
+        emit('error', {'message': 'Unauthorized - Admin access required'})
+        return
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    try:
+        timestamp = datetime.now().isoformat()
+        c.execute('''INSERT INTO messages (device_id, sender, message, type, is_admin, timestamp)
+                     VALUES (?, ?, ?, ?, ?, ?)''',
+                  (device_id, 'Flexia Merchant', message, msg_type, True, timestamp))
+        conn.commit()
+        
+        message_data = {
+            'device_id': device_id,
+            'sender': 'Flexia Merchant',
+            'message': message,
+            'type': msg_type,
+            'is_admin': True,
+            'timestamp': timestamp,
+            'id': c.lastrowid
+        }
+        
+        # Send to specific user's room
+        emit('receive_message', message_data, room=device_id)
+        
+        # Also send to admin panel
+        emit('receive_message', message_data, broadcast=True)
+        
+        print(f'📤 Admin message to {device_id[:8]}...: {message[:50]}...')
+        
+    except Exception as e:
+        print(f'❌ Error sending admin message: {e}')
+        emit('error', {'message': 'Failed to send admin message'})
+    finally:
+        conn.close()
+
+@socketio.on('upload_image')
+def handle_upload_image(data):
+    """Handle image upload"""
+    device_id = data.get('device_id')
+    image_data = data.get('image')
+    filename = data.get('filename', 'image.jpg')
+    is_admin = data.get('is_admin', False)
+    username = data.get('username', 'Anonymous')
+    
+    if not all([device_id, image_data]):
+        emit('error', {'message': 'Missing required fields'})
+        return
+    
+    # Check admin authentication if is_admin
+    if is_admin:
+        sid = request.sid
+        if sid not in admin_sessions or not admin_sessions[sid]:
+            emit('error', {'message': 'Unauthorized - Admin access required'})
+            return
+    
+    try:
+        # Update user activity
+        if not is_admin:
+            update_user_activity(device_id)
+        
+        # Extract base64 data
+        if ',' in image_data:
+            image_data = image_data.split(',')[1]
+        
+        # Generate unique filename
+        ext = filename.split('.')[-1] if '.' in filename else 'jpg'
+        unique_filename = f"{device_id}_{uuid.uuid4().hex[:8]}.{ext}"
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+        
+        # Save file
+        with open(filepath, 'wb') as f:
+            f.write(base64.b64decode(image_data))
+        
+        # Save to database
+        conn = get_db()
         c = conn.cursor()
-        c.execute("""
-            SELECT 
-                message_id as id,
-                sender,
-                message,
-                message_type as type,
-                timestamp,
-                is_admin
-            FROM messages 
-            WHERE device_id = ?
-            ORDER BY timestamp ASC
-            LIMIT ?
-        """, (device_id, limit))
+        
+        # Record file upload
+        c.execute('''INSERT INTO uploaded_files (device_id, filename, filepath)
+                     VALUES (?, ?, ?)''', (device_id, filename, filepath))
+        
+        # Save as message
+        image_url = f'/uploads/{unique_filename}'
+        sender = 'Flexia Merchant' if is_admin else username
+        timestamp = datetime.now().isoformat()
+        
+        c.execute('''INSERT INTO messages (device_id, sender, message, type, is_admin, timestamp)
+                     VALUES (?, ?, ?, ?, ?, ?)''',
+                  (device_id, sender, image_url, 'image', is_admin, timestamp))
+        conn.commit()
+        conn.close()
+        
+        message_data = {
+            'device_id': device_id,
+            'sender': sender,
+            'message': image_url,
+            'type': 'image',
+            'is_admin': is_admin,
+            'timestamp': timestamp
+        }
+        
+        if is_admin:
+            # Admin sending to user
+            emit('receive_message', message_data, room=device_id)
+            emit('receive_message', message_data, broadcast=True)
+        else:
+            # User sending to admin
+            emit('receive_message', message_data, room=device_id)
+            emit('new_user_message', message_data, broadcast=True, include_self=False)
+        
+        print(f'📷 Image uploaded: {unique_filename}')
+        
+    except Exception as e:
+        print(f'❌ Error uploading image: {e}')
+        emit('error', {'message': 'Image upload failed'})
+
+@socketio.on('get_all_users')
+def handle_get_all_users(data):
+    """Get all users for admin"""
+    # Check admin authentication
+    sid = request.sid
+    if sid not in admin_sessions or not admin_sessions[sid]:
+        emit('error', {'message': 'Unauthorized - Admin access required'})
+        return
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    try:
+        c.execute('''SELECT 
+                        u.device_id,
+                        u.username,
+                        u.created_at,
+                        u.last_active,
+                        COUNT(m.id) as message_count,
+                        MAX(m.timestamp) as last_message
+                     FROM users u
+                     LEFT JOIN messages m ON u.device_id = m.device_id
+                     GROUP BY u.device_id
+                     ORDER BY u.last_active DESC''')
+        
+        users = []
+        for row in c.fetchall():
+            # Calculate inactivity duration
+            last_active = datetime.fromisoformat(row['last_active']) if row['last_active'] else datetime.now()
+            inactive_hours = (datetime.now() - last_active).total_seconds() / 3600
+            
+            users.append({
+                'device_id': row['device_id'],
+                'username': row['username'] or 'Anonymous',
+                'created_at': row['created_at'],
+                'last_active': row['last_active'],
+                'last_message': row['last_message'],
+                'message_count': row['message_count'],
+                'inactive_hours': round(inactive_hours, 1),
+                'is_active': inactive_hours < 48  # Active if less than 2 days
+            })
+        
+        emit('users_list', {'users': users, 'total': len(users), 'timestamp': datetime.now().isoformat()})
+        print(f'📋 Sent users list: {len(users)} users')
+        
+    except Exception as e:
+        print(f'❌ Error getting users: {e}')
+        emit('error', {'message': 'Failed to get users'})
+    finally:
+        conn.close()
+
+@socketio.on('get_user_messages')
+def handle_get_user_messages(data):
+    """Get messages for a specific user"""
+    device_id = data.get('device_id')
+    
+    if not device_id:
+        emit('error', {'message': 'Device ID required'})
+        return
+    
+    # Check admin authentication for this endpoint
+    sid = request.sid
+    if sid not in admin_sessions or not admin_sessions[sid]:
+        emit('error', {'message': 'Unauthorized - Admin access required'})
+        return
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    try:
+        c.execute('''SELECT * FROM messages 
+                     WHERE device_id = ? 
+                     ORDER BY timestamp ASC''', (device_id,))
         
         messages = []
         for row in c.fetchall():
             messages.append({
                 'id': row['id'],
+                'device_id': row['device_id'],
                 'sender': row['sender'],
                 'message': row['message'],
                 'type': row['type'],
-                'timestamp': row['timestamp'],
                 'is_admin': bool(row['is_admin']),
-                'device_id': device_id
+                'timestamp': row['timestamp']
             })
-    
-    return messages
-
-def get_all_active_users():
-    """Get all active users for admin panel"""
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        c.execute("""
-            SELECT 
-                u.device_id,
-                u.username,
-                u.created_at,
-                u.expires_at,
-                u.last_active,
-                u.message_count,
-                COUNT(m.id) as recent_messages,
-                MAX(m.timestamp) as last_message_time
-            FROM users u
-            LEFT JOIN messages m ON u.device_id = m.device_id 
-                AND m.timestamp > datetime('now', '-1 day')
-            WHERE u.expires_at > datetime('now')
-            GROUP BY u.device_id, u.username, u.created_at, u.expires_at, 
-                     u.last_active, u.message_count
-            ORDER BY u.last_active DESC
-        """)
         
-        users = []
-        for row in c.fetchall():
-            users.append({
-                'device_id': row['device_id'],
-                'username': row['username'],
-                'created_at': row['created_at'],
-                'expires_at': row['expires_at'],
-                'last_active': row['last_active'],
-                'message_count': row['message_count'] or 0,
-                'recent_messages': row['recent_messages'] or 0,
-                'is_online': datetime.fromisoformat(row['last_active']) > datetime.now() - timedelta(minutes=5)
-            })
-    
-    return users
-
-# Socket.IO Events
-@socketio.on('connect')
-def handle_connect():
-    try:
-        device_id = request.args.get('device_id')
-        if not device_id:
-            device_id = str(uuid.uuid4())
-        
-        # Get or create user
-        user = create_or_get_user(device_id)
-        
-        # Join user's room
-        join_room(device_id)
-        
-        # Send user info
-        emit('user_info', {
-            'device_id': user['device_id'],
-            'username': user['username'],
-            'expires_at': user['expires_at'],
-            'created_at': user['created_at'],
-            'message_count': user['message_count']
-        })
-        
-        # Send previous messages
-        messages = get_user_messages(device_id, 50)
-        for msg in messages:
-            emit('receive_message', msg)
-        
-        logger.info(f"✅ User connected: {user['username']} ({device_id[:8]}...)")
-    
-    except Exception as e:
-        logger.error(f"❌ Connection error: {str(e)}")
-        emit('error', {'message': 'Connection failed'})
-
-@socketio.on('send_message')
-def handle_message(data):
-    try:
-        device_id = data.get('device_id')
-        message = data.get('message', '').strip()
-        message_type = data.get('type', 'text')
-        
-        if not device_id or not message:
-            return
-        
-        # Get user
-        with get_db_connection() as conn:
-            c = conn.cursor()
-            c.execute("SELECT * FROM users WHERE device_id = ?", (device_id,))
-            user = c.fetchone()
-        
-        if not user:
-            emit('error', {'message': 'User not found'})
-            return
-        
-        # Check if user is expired
-        expires_at = datetime.fromisoformat(user['expires_at'])
-        if datetime.now() > expires_at:
-            emit('error', {'message': 'Your account has expired'})
-            return
-        
-        # Save user message
-        message_id = save_message(device_id, user['username'], message, message_type, False)
-        
-        # Send to user
-        user_msg = {
-            'id': message_id,
-            'sender': user['username'],
-            'message': message,
-            'type': message_type,
-            'timestamp': datetime.now().isoformat(),
-            'is_admin': False,
-            'device_id': device_id
-        }
-        
-        emit('receive_message', user_msg, room=device_id)
-        
-        # Notify all admins about new message
-        emit('new_user_message', user_msg, broadcast=True)
-        
-        logger.info(f"📨 Message sent from {user['username']}: {message[:50]}...")
-    
-    except Exception as e:
-        logger.error(f"❌ Message sending error: {str(e)}")
-        emit('error', {'message': 'Failed to send message'})
-
-@socketio.on('upload_image')
-def handle_image_upload(data):
-    try:
-        device_id = data.get('device_id')
-        image_data = data.get('image')
-        filename = data.get('filename', 'image.png')
-        is_admin = data.get('is_admin', False)
-        
-        if not device_id or not image_data:
-            return
-        
-        # Get user
-        with get_db_connection() as conn:
-            c = conn.cursor()
-            c.execute("SELECT * FROM users WHERE device_id = ?", (device_id,))
-            user = c.fetchone()
-        
-        if not user:
-            emit('error', {'message': 'User not found'})
-            return
-        
-        # Check if user is expired (skip for admin)
-        if not is_admin:
-            expires_at = datetime.fromisoformat(user['expires_at'])
-            if datetime.now() > expires_at:
-                emit('error', {'message': 'Your account has expired'})
-                return
-        
-        # Decode and save image
-        if ',' in image_data:
-            image_data = image_data.split(',')[1]
-        
-        image_bytes = base64.b64decode(image_data)
-        
-        # Validate image
-        img = Image.open(io.BytesIO(image_bytes))
-        img.verify()
-        
-        # Generate unique filename
-        file_id = str(uuid.uuid4())
-        unique_filename = f"{file_id}_{filename}"
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
-        
-        # Save file
-        with open(filepath, 'wb') as f:
-            f.write(image_bytes)
-        
-        # Save file record to database
-        with get_db_connection() as conn:
-            c = conn.cursor()
-            c.execute("""
-                INSERT INTO files 
-                (file_id, filename, filepath, device_id, upload_time, file_size, mime_type)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                file_id,
-                filename,
-                f'/uploads/{unique_filename}',
-                device_id,
-                datetime.now().isoformat(),
-                len(image_bytes),
-                'image/png'
-            ))
-            conn.commit()
-        
-        # Determine sender
-        sender = 'Flexia Merchant' if is_admin else user['username']
-        
-        # Save message with image
-        message_id = save_message(
-            device_id,
-            sender,
-            f'/uploads/{unique_filename}',
-            'image',
-            is_admin
-        )
-        
-        # Send to user
-        image_msg = {
-            'id': message_id,
-            'sender': sender,
-            'message': f'/uploads/{unique_filename}',
-            'type': 'image',
-            'timestamp': datetime.now().isoformat(),
-            'is_admin': is_admin,
-            'device_id': device_id
-        }
-        
-        emit('receive_message', image_msg, room=device_id)
-        
-        # If not admin, broadcast to admins
-        if not is_admin:
-            emit('new_user_message', image_msg, broadcast=True)
-        
-        logger.info(f"🖼️ Image uploaded by {sender}: {filename}")
-    
-    except Exception as e:
-        logger.error(f"❌ Image upload error: {str(e)}")
-        emit('error', {'message': f'Failed to upload image: {str(e)}'})
-
-@socketio.on('admin_message')
-def handle_admin_message(data):
-    try:
-        device_id = data.get('device_id')
-        message = data.get('message', '').strip()
-        message_type = data.get('type', 'text')
-        is_admin = data.get('is_admin', False)
-        
-        if not device_id or not message:
-            logger.warning("❌ Admin message missing device_id or message")
-            return
-        
-        # Basic admin verification
-        if not is_admin:
-            logger.warning("❌ Not an admin request")
-            return
-        
-        logger.info(f"👑 Admin sending message to {device_id[:8]}...: {message[:50]}...")
-        
-        # Save admin message
-        message_id = save_message(device_id, 'Flexia Merchant', message, message_type, True)
-        
-        # Create message object
-        admin_msg = {
-            'id': message_id,
-            'sender': 'Flexia Merchant',
-            'message': message,
-            'type': message_type,
-            'timestamp': datetime.now().isoformat(),
-            'is_admin': True,
-            'device_id': device_id
-        }
-        
-        # Send to user's room
-        emit('receive_message', admin_msg, room=device_id)
-        
-        # Also send back to admin for confirmation
-        emit('receive_message', admin_msg)
-        
-        logger.info(f"✅ Admin message delivered to {device_id[:8]}...")
-    
-    except Exception as e:
-        logger.error(f"❌ Admin message error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-
-@socketio.on('get_all_users')
-def handle_get_users(data):
-    try:
-        is_admin = data.get('is_admin', False)
-        
-        if not is_admin:
-            logger.warning("❌ Unauthorized user list request")
-            return
-        
-        users = get_all_active_users()
-        
-        emit('users_list', {
-            'users': users,
-            'total': len(users),
-            'timestamp': datetime.now().isoformat()
-        })
-        
-        logger.info(f"📊 Admin requested user list: {len(users)} users")
-    
-    except Exception as e:
-        logger.error(f"❌ Get users error: {str(e)}")
-
-@socketio.on('get_user_messages')
-def handle_get_user_messages(data):
-    try:
-        device_id = data.get('device_id')
-        is_admin = data.get('is_admin', False)
-        
-        if not is_admin or not device_id:
-            logger.warning("❌ Unauthorized messages request")
-            return
-        
-        messages = get_user_messages(device_id, 100)
+        # Get user info
+        c.execute('SELECT username FROM users WHERE device_id = ?', (device_id,))
+        user_info = c.fetchone()
+        username = user_info['username'] if user_info else 'Anonymous'
         
         emit('user_messages', {
             'device_id': device_id,
+            'username': username,
             'messages': messages,
             'total': len(messages)
         })
+        print(f'💬 Sent {len(messages)} messages for {device_id}')
         
-        logger.info(f"📨 Admin requested messages for {device_id[:8]}...: {len(messages)} messages")
-    
     except Exception as e:
-        logger.error(f"❌ Get user messages error: {str(e)}")
+        print(f'❌ Error getting messages: {e}')
+        emit('error', {'message': 'Failed to get messages'})
+    finally:
+        conn.close()
 
 @socketio.on('delete_user')
 def handle_delete_user(data):
+    """Delete a user and all their data"""
+    device_id = data.get('device_id')
+    
+    if not device_id:
+        emit('error', {'message': 'Device ID required'})
+        return
+    
+    # Check admin authentication
+    sid = request.sid
+    if sid not in admin_sessions or not admin_sessions[sid]:
+        emit('error', {'message': 'Unauthorized - Admin access required'})
+        return
+    
     try:
-        device_id = data.get('device_id')
-        is_admin = data.get('is_admin', False)
+        # Get user files first
+        conn = get_db()
+        c = conn.cursor()
         
-        if not is_admin or not device_id:
-            return
+        c.execute('SELECT filepath FROM uploaded_files WHERE device_id = ?', (device_id,))
+        files = c.fetchall()
         
-        with get_db_connection() as conn:
-            c = conn.cursor()
-            
-            # Delete messages
-            c.execute("DELETE FROM messages WHERE device_id = ?", (device_id,))
-            
-            # Delete files records
-            c.execute("DELETE FROM files WHERE device_id = ?", (device_id,))
-            
-            # Delete user
-            c.execute("DELETE FROM users WHERE device_id = ?", (device_id,))
-            
-            conn.commit()
+        # Delete physical files
+        for file_row in files:
+            filepath = file_row[0]
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                    print(f"🗑️ Deleted file: {filepath}")
+                except Exception as e:
+                    print(f"❌ Error deleting file {filepath}: {e}")
         
-        emit('user_deleted', {'device_id': device_id})
+        # Delete user (CASCADE will delete messages and file records)
+        c.execute('DELETE FROM users WHERE device_id = ?', (device_id,))
+        conn.commit()
+        conn.close()
         
-        logger.info(f"🗑️ Admin deleted user: {device_id[:8]}...")
-    
+        print(f"🗑️ Admin deleted user: {device_id}")
+        emit('user_deleted', {'device_id': device_id, 'success': True})
+        
+        # Refresh users list
+        handle_get_all_users({})
+        
     except Exception as e:
-        logger.error(f"❌ Delete user error: {str(e)}")
+        print(f'❌ Error deleting user: {e}')
+        emit('error', {'message': 'Failed to delete user'})
 
-# Background task for periodic cleanup
-def background_cleanup():
-    """Periodic cleanup task"""
-    while True:
-        socketio.sleep(3600)  # Run every hour
-        cleanup_expired_users()
-
-# Start background task
-socketio.start_background_task(background_cleanup)
-
-# Shutdown handler
-@atexit.register
-def shutdown():
-    logger.info("🛑 Server shutting down...")
-    cleanup_expired_users()
-
-# Main entry point
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    logger.info(f"🚀 Starting Flexia Merchant Chat Server on port {port}...")
-    logger.info(f"🔧 Admin panel: http://localhost:{port}/{admin_password}.html")
-    logger.info(f"📊 Health check: http://localhost:{port}/health")
-    logger.info(f"📈 Stats API: http://localhost:{port}/api/stats?admin={admin_password}")
+    print('🚀 Starting Flexia Merchant Chat Server...')
+    print('=' * 50)
+    print(f'📁 Upload folder: {os.path.abspath(UPLOAD_FOLDER)}')
+    print(f'💾 Database: {os.path.abspath("flexia_chat.db")}')
+    print('🔐 Admin password protected')
+    print('📊 Cleanup scheduler active (runs every hour)')
+    print('🗑️ Users inactive for 2+ days will be auto-deleted')
+    print('=' * 50)
+    print('🌐 User Chat: http://localhost:5000')
+    print('👑 Admin Panel: http://localhost:5000/admin/login')
+    print('=' * 50)
     
-    socketio.run(app, 
-                 host='0.0.0.0', 
-                 port=port, 
-                 debug=False,
-                 allow_unsafe_werkzeug=True)
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
