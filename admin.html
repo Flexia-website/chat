@@ -951,6 +951,42 @@
             from { transform: translateX(-100%); }
             to { transform: translateX(0); }
         }
+
+        /* Toast Notifications */
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            border-radius: 12px;
+            box-shadow: var(--box-shadow);
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            animation: slideDown 0.3s ease;
+            max-width: 300px;
+        }
+
+        .toast-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .toast-error {
+            background: var(--danger);
+            color: white;
+        }
+
+        .toast-warning {
+            background: var(--warning);
+            color: white;
+        }
+
+        .toast-info {
+            background: var(--primary);
+            color: white;
+        }
     </style>
 </head>
 <body>
@@ -1015,7 +1051,7 @@
                     </div>
                     <div class="user-details">
                         <h4>Administrator</h4>
-                        <span id="adminStatus">Online</span>
+                        <span id="adminStatus">Offline</span>
                     </div>
                 </div>
                 
@@ -1124,7 +1160,7 @@
                             <h3 id="chatUserName">Loading...</h3>
                             <div class="status">
                                 <span class="status-dot"></span>
-                                <span id="chatUserStatus">Online</span>
+                                <span id="chatUserStatus">Offline</span>
                                 •
                                 <span id="chatMessageCount">0 messages</span>
                             </div>
@@ -1167,13 +1203,17 @@
         let currentUser = null;
         let allUsers = [];
         let unreadMessages = 0;
+        let isAuthenticated = false;
 
         // Initialize
         function init() {
+            // Check if already authenticated via HTTP session
+            checkAdminSession();
+            
             connectSocket();
             updateTime();
             setInterval(updateTime, 1000);
-            setInterval(updateStats, 30000);
+            setInterval(fetchStats, 10000); // Update stats every 10 seconds
             
             // Mobile menu
             document.getElementById('mobileMenuBtn').addEventListener('click', toggleMobileMenu);
@@ -1187,65 +1227,168 @@
             });
         }
 
+        // Check admin session
+        function checkAdminSession() {
+            fetch('/api/stats')
+                .then(response => {
+                    if (response.ok) {
+                        // Already authenticated via HTTP session
+                        isAuthenticated = true;
+                        updateAdminStatus('Online', 'success');
+                    } else {
+                        // Not authenticated, show login prompt
+                        setTimeout(promptAdminLogin, 1000);
+                    }
+                })
+                .catch(() => {
+                    setTimeout(promptAdminLogin, 1000);
+                });
+        }
+
+        // Prompt for admin login
+        function promptAdminLogin() {
+            const password = prompt('🔒 Admin Authentication\n\nEnter admin password:');
+            if (password) {
+                authenticateAdmin(password);
+            } else {
+                window.location.href = '/admin/login';
+            }
+        }
+
         // Socket.IO connection
         function connectSocket() {
             socket = io({
                 transports: ['websocket', 'polling'],
                 reconnection: true,
-                reconnectionAttempts: 5,
-                reconnectionDelay: 1000
+                reconnectionAttempts: 10,
+                reconnectionDelay: 1000,
+                timeout: 20000
             });
 
             socket.on('connect', () => {
-                console.log('✅ Connected to server');
-                updateAdminStatus('Online', 'success');
+                console.log('✅ Connected to server:', socket.id);
+                
+                // If already authenticated via HTTP, authenticate via socket too
+                if (isAuthenticated) {
+                    // Use the default password for socket auth (same as HTTP)
+                    authenticateAdmin('flexia123');
+                }
             });
 
-            socket.on('disconnect', () => {
-                console.log('❌ Disconnected from server');
+            socket.on('connection_established', (data) => {
+                console.log('📡 Connection established:', data);
+            });
+
+            socket.on('disconnect', (reason) => {
+                console.log('❌ Disconnected:', reason);
                 updateAdminStatus('Offline', 'danger');
+                showToast('Disconnected from server', 'error');
             });
 
+            socket.on('connect_error', (error) => {
+                console.error('Connection error:', error);
+                updateAdminStatus('Connection Error', 'danger');
+            });
+
+            socket.on('reconnect', (attemptNumber) => {
+                console.log('🔄 Reconnected after', attemptNumber, 'attempts');
+                updateAdminStatus('Online', 'success');
+                showToast('Reconnected to server', 'success');
+                
+                // Re-authenticate
+                if (isAuthenticated) {
+                    authenticateAdmin('flexia123');
+                }
+            });
+
+            // Admin authentication events
             socket.on('admin_auth_success', (data) => {
-                console.log('✅ Admin authenticated');
+                console.log('✅ Admin authenticated:', data);
+                isAuthenticated = true;
+                updateAdminStatus('Online', 'success');
+                showToast('Admin authentication successful', 'success');
+                
+                // Load initial data
                 loadDashboard();
             });
 
-            socket.on('admin_auth_failed', () => {
-                alert('Authentication failed! Redirecting to login...');
-                window.location.href = '/admin/login';
+            socket.on('admin_auth_failed', (data) => {
+                console.error('Admin auth failed');
+                isAuthenticated = false;
+                updateAdminStatus('Unauthorized', 'danger');
+                showToast('Authentication failed', 'error');
+                promptAdminLogin();
             });
 
+            // Data events
             socket.on('users_list', (data) => {
+                console.log('📋 Received users list:', data.users.length, 'users');
                 allUsers = data.users;
                 renderUsersTable(data.users);
                 updateBadges(data);
             });
 
             socket.on('user_messages', (data) => {
+                console.log('💬 Received user messages:', data.messages.length);
                 renderChatMessages(data.messages, data.username);
             });
 
             socket.on('new_user_message', (data) => {
+                console.log('📨 New message from user:', data);
+                
                 if (currentUser && data.device_id === currentUser.device_id) {
+                    // Add to current chat
                     addMessageToChat(data);
                 } else {
+                    // Increment unread count and show notification
                     unreadMessages++;
                     updateUnreadBadge();
                     showNotification(data.sender, data.message);
                 }
+                
+                // Refresh users list
                 socket.emit('get_all_users', {});
             });
 
             socket.on('receive_message', (data) => {
+                console.log('📩 Received message:', data);
                 if (currentUser && data.device_id === currentUser.device_id) {
                     addMessageToChat(data);
                 }
             });
 
-            socket.on('error', (data) => {
-                showError(data.message);
+            socket.on('user_connected', (data) => {
+                console.log('👤 User connected:', data);
+                showToast(`${data.username} connected`, 'info');
+                socket.emit('get_all_users', {});
             });
+
+            socket.on('user_disconnected', (data) => {
+                console.log('👋 User disconnected:', data);
+                showToast('User disconnected', 'warning');
+                socket.emit('get_all_users', {});
+            });
+
+            socket.on('user_deleted', (data) => {
+                console.log('🗑️ User deleted:', data);
+                showToast('User deleted successfully', 'success');
+            });
+
+            socket.on('error', (data) => {
+                console.error('Server error:', data);
+                showToast('Error: ' + data.message, 'error');
+            });
+        }
+
+        // Authenticate admin
+        function authenticateAdmin(password) {
+            if (!socket || !socket.connected) {
+                showToast('Not connected to server', 'error');
+                return;
+            }
+            
+            console.log('🔐 Authenticating admin...');
+            socket.emit('admin_auth', { password: password });
         }
 
         // Dashboard functions
@@ -1268,13 +1411,6 @@
                     document.getElementById('activeUsersBadge').textContent = data.active_users;
                 })
                 .catch(error => console.error('Error fetching stats:', error));
-        }
-
-        function updateStats() {
-            if (socket && socket.connected) {
-                socket.emit('get_all_users', {});
-                fetchStats();
-            }
         }
 
         // Users table
@@ -1312,6 +1448,19 @@
                 const hoursAgo = Math.floor((now - lastActive) / (1000 * 60 * 60));
                 const initials = user.username.substring(0, 2).toUpperCase();
                 
+                // Determine status
+                let statusClass, statusText;
+                if (user.is_connected) {
+                    statusClass = 'status-active';
+                    statusText = 'Online';
+                } else if (user.is_active) {
+                    statusClass = 'status-active';
+                    statusText = 'Active';
+                } else {
+                    statusClass = 'status-inactive';
+                    statusText = 'Inactive';
+                }
+                
                 html += `
                     <tr>
                         <td>
@@ -1334,9 +1483,9 @@
                             <div style="font-size: 12px; color: var(--gray);">${lastActive.toLocaleDateString()}</div>
                         </td>
                         <td>
-                            <div class="status-badge ${user.is_active ? 'status-active' : 'status-inactive'}">
+                            <div class="status-badge ${statusClass}">
                                 <span class="status-dot"></span>
-                                ${user.is_active ? 'Active' : 'Inactive'}
+                                ${statusText}
                             </div>
                         </td>
                         <td>
@@ -1344,7 +1493,7 @@
                                 <button class="btn-action btn-chat" onclick="viewUserChat('${user.device_id}', '${user.username}', ${index})">
                                     <i class="fas fa-comment"></i>
                                 </button>
-                                <button class="btn-action btn-delete" onclick="deleteUser('${user.device_id}')">
+                                <button class="btn-action btn-delete" onclick="deleteUser('${user.device_id}', '${user.username}')">
                                     <i class="fas fa-trash"></i>
                                 </button>
                             </div>
@@ -1364,6 +1513,11 @@
 
         // Chat functions
         function viewUserChat(deviceId, username, colorIndex) {
+            if (!isAuthenticated) {
+                showToast('Please authenticate first', 'error');
+                return;
+            }
+            
             currentUser = { device_id: deviceId, username: username };
             
             // Update UI
@@ -1385,7 +1539,10 @@
                 const statusElement = document.getElementById('chatUserStatus');
                 const statusDot = statusElement.previousElementSibling;
                 
-                if (user.is_active) {
+                if (user.is_connected) {
+                    statusElement.textContent = 'Online';
+                    statusDot.style.background = 'var(--success)';
+                } else if (user.is_active) {
                     statusElement.textContent = 'Active';
                     statusDot.style.background = 'var(--success)';
                 } else {
@@ -1397,6 +1554,10 @@
             }
             
             closeMobileMenu();
+            
+            // Clear unread messages for this user
+            unreadMessages = 0;
+            updateUnreadBadge();
         }
 
         function renderChatMessages(messages, username) {
@@ -1445,7 +1606,7 @@
                             <div class="message-bubble">
                                 <div class="message-sender">${msg.sender}</div>
                                 <div class="message-image">
-                                    <img src="${msg.message}" alt="Image" onload="this.parentElement.parentElement.parentElement.scrollIntoView({ behavior: 'smooth' })">
+                                    <img src="${msg.message}" alt="Image" style="cursor: pointer;" onclick="openImageModal('${msg.message}')">
                                 </div>
                                 <div class="message-time">${time}</div>
                             </div>
@@ -1486,7 +1647,7 @@
                         <div class="message-bubble">
                             <div class="message-sender">${message.sender}</div>
                             <div class="message-image">
-                                <img src="${message.message}" alt="Image">
+                                <img src="${message.message}" alt="Image" style="cursor: pointer;" onclick="openImageModal('${message.message}')">
                             </div>
                             <div class="message-time">${time}</div>
                         </div>
@@ -1509,12 +1670,20 @@
         }
 
         function sendAdminMessage() {
-            if (!currentUser) return;
+            if (!currentUser || !isAuthenticated) {
+                showToast('Please select a user and authenticate first', 'error');
+                return;
+            }
             
             const input = document.getElementById('messageInput');
             const message = input.value.trim();
             
-            if (!message) return;
+            if (!message) {
+                showToast('Message cannot be empty', 'warning');
+                return;
+            }
+            
+            console.log('📤 Sending admin message:', { device_id: currentUser.device_id, message });
             
             socket.emit('admin_message', {
                 device_id: currentUser.device_id,
@@ -1527,7 +1696,10 @@
         }
 
         function uploadImage() {
-            if (!currentUser) return;
+            if (!currentUser || !isAuthenticated) {
+                showToast('Please select a user and authenticate first', 'error');
+                return;
+            }
             
             const fileInput = document.getElementById('imageUpload');
             const file = fileInput.files[0];
@@ -1535,12 +1707,14 @@
             if (!file) return;
             
             if (file.size > 5 * 1024 * 1024) { // 5MB limit
-                showError('File size must be less than 5MB');
+                showToast('File size must be less than 5MB', 'error');
                 return;
             }
             
             const reader = new FileReader();
             reader.onload = function(e) {
+                console.log('📸 Uploading image for:', currentUser.device_id);
+                
                 socket.emit('upload_image', {
                     device_id: currentUser.device_id,
                     image: e.target.result,
@@ -1549,7 +1723,14 @@
                 });
                 
                 fileInput.value = '';
+                showToast('Image uploaded successfully', 'success');
             };
+            
+            reader.onerror = function() {
+                showToast('Failed to read image file', 'error');
+                fileInput.value = '';
+            };
+            
             reader.readAsDataURL(file);
         }
 
@@ -1609,22 +1790,33 @@
             renderUsersTable(filteredUsers);
         }
 
-        function deleteUser(deviceId) {
-            if (confirm('Are you sure you want to delete this user and all their data? This action cannot be undone.')) {
+        function deleteUser(deviceId, username) {
+            if (!isAuthenticated) {
+                showToast('Please authenticate first', 'error');
+                return;
+            }
+            
+            if (confirm(`Are you sure you want to delete user "${username}" (${deviceId}) and all their data? This action cannot be undone.`)) {
+                console.log('🗑️ Deleting user:', deviceId);
                 socket.emit('delete_user', { device_id: deviceId });
             }
         }
 
         function manualCleanup() {
+            if (!isAuthenticated) {
+                showToast('Please authenticate first', 'error');
+                return;
+            }
+            
             if (confirm('This will delete all users inactive for 2+ days. Continue?')) {
                 fetch('/api/cleanup', { method: 'POST' })
                     .then(response => response.json())
                     .then(data => {
-                        showNotification('Cleanup Complete', data.message);
+                        showToast(data.message, 'success');
                         socket.emit('get_all_users', {});
                     })
                     .catch(error => {
-                        showError('Cleanup failed: ' + error.message);
+                        showToast('Cleanup failed: ' + error.message, 'error');
                     });
             }
         }
@@ -1666,42 +1858,71 @@
 
         function showNotification(title, message) {
             if ('Notification' in window && Notification.permission === 'granted') {
-                new Notification(title, {
-                    body: message,
+                new Notification(`Flexia Admin: ${title}`, {
+                    body: message.length > 50 ? message.substring(0, 50) + '...' : message,
                     icon: '/favicon.ico'
                 });
             }
         }
 
-        function showError(message) {
-            // Create error toast
+        function showToast(message, type) {
+            // Remove existing toasts
+            const existingToasts = document.querySelectorAll('.toast');
+            existingToasts.forEach(toast => toast.remove());
+            
+            // Create toast
             const toast = document.createElement('div');
-            toast.style.cssText = `
-                position: fixed;
-                top: 20px;
-                right: 20px;
-                background: var(--danger);
-                color: white;
-                padding: 15px 20px;
-                border-radius: var(--border-radius);
-                box-shadow: var(--box-shadow);
-                z-index: 10000;
-                display: flex;
-                align-items: center;
-                gap: 10px;
-                animation: slideDown 0.3s ease;
-            `;
+            toast.className = `toast toast-${type}`;
             toast.innerHTML = `
-                <i class="fas fa-exclamation-circle"></i>
+                <i class="fas ${type === 'error' ? 'fa-exclamation-circle' : 
+                              type === 'warning' ? 'fa-exclamation-triangle' : 
+                              'fa-check-circle'}"></i>
                 <span>${message}</span>
             `;
             
             document.body.appendChild(toast);
             
+            // Auto-remove after 3 seconds
             setTimeout(() => {
                 toast.style.animation = 'slideUp 0.3s ease';
                 setTimeout(() => toast.remove(), 300);
             }, 3000);
+        }
+
+        // Image modal
+        function openImageModal(imageUrl) {
+            const modal = document.createElement('div');
+            modal.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.9);
+                z-index: 10000;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                animation: fadeIn 0.3s ease;
+            `;
+            
+            modal.innerHTML = `
+                <div style="position: relative; max-width: 90%; max-height: 90%;">
+                    <button onclick="this.parentElement.parentElement.remove()" 
+                            style="position: absolute; top: -40px; right: 0; background: none; border: none; color: white; font-size: 30px; cursor: pointer; opacity: 0.7; transition: 0.3s;">
+                        ×
+                    </button>
+                    <img src="${imageUrl}" alt="Preview" style="width: 100%; height: auto; border-radius: 10px;">
+                </div>
+            `;
+            
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.remove();
+                }
+            });
+            
+            document.body.appendChild(modal);
         }
 
         // Navigation
@@ -1726,12 +1947,15 @@
                 document.getElementById('dashboardView').style.display = 'none';
                 document.getElementById('chatView').style.display = 'flex';
                 updateNavActive(2);
+            } else {
+                showToast('Please select a user first', 'warning');
+                showUsers();
             }
             closeMobileMenu();
         }
 
         function showSettings() {
-            alert('Settings panel coming soon!');
+            alert('Settings Panel\n\n• Admin Password: flexia123\n• Auto-cleanup: Every 1 hour\n• Max file size: 5MB\n• Inactivity period: 48 hours');
             closeMobileMenu();
         }
 
@@ -1742,12 +1966,32 @@
         }
 
         // Request notification permission
-        if ('Notification' in window) {
+        if ('Notification' in window && Notification.permission === 'default') {
             Notification.requestPermission();
         }
 
         // Initialize on load
         window.onload = init;
+
+        // Debug utilities
+        window.adminDebug = {
+            getState: () => ({
+                isAuthenticated,
+                socketConnected: socket?.connected,
+                socketId: socket?.id,
+                currentUser,
+                allUsersCount: allUsers.length,
+                unreadMessages
+            }),
+            testConnection: () => {
+                showToast(socket?.connected ? 'Connected: ' + socket.id : 'Not connected', 
+                         socket?.connected ? 'success' : 'error');
+            },
+            reloadUsers: () => {
+                socket.emit('get_all_users', {});
+                showToast('Reloading users...', 'info');
+            }
+        };
     </script>
 </body>
 </html>
