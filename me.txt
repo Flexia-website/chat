@@ -1,0 +1,15 @@
+flexia-merchant-chat/
+├── server.py
+├── gunicorn_config.py
+├── render.yaml
+├── .renderignore
+├── requirements.txt
+├── .gitignore
+├── README.md
+├── Procfile
+├── chat_app.db (will be created automatically)
+├── static/
+│   └── logo.png (add your logo here)
+└── templates/
+    ├── index.html
+    └── admin.html

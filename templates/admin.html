@@ -1,0 +1,1482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Flexia Merchant Admin</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --primary-light: #818cf8;
+            --secondary: #8b5cf6;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --dark: #0f172a;
+            --light: #f8fafc;
+            --sidebar-width: 320px;
+            
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+            --radius-full: 9999px;
+            
+            --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Poppins', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #f1f5f9;
+            color: #334155;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .admin-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        .admin-header {
+            background: white;
+            padding: 16px 20px;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: var(--shadow-sm);
+            z-index: 10;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .menu-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 40px;
+            height: 40px;
+            border-radius: var(--radius-md);
+            background: #f1f5f9;
+            border: none;
+            color: #475569;
+            font-size: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .menu-toggle:hover {
+            background: #e2e8f0;
+            transform: scale(1.05);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-logo {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 18px;
+        }
+
+        .brand-text h1 {
+            font-size: 20px;
+            font-weight: 700;
+            color: #1e293b;
+        }
+
+        .brand-text p {
+            font-size: 12px;
+            color: #64748b;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .admin-badge {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+            padding: 8px 16px;
+            border-radius: var(--radius-full);
+            font-size: 14px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .logout-btn {
+            padding: 10px 20px;
+            background: #fee2e2;
+            color: #dc2626;
+            border: none;
+            border-radius: var(--radius-md);
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+
+        .logout-btn:hover {
+            background: #fecaca;
+            transform: translateY(-2px);
+        }
+
+        .stats-bar {
+            background: white;
+            padding: 20px;
+            border-bottom: 1px solid #e2e8f0;
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .stat-card {
+            background: #f8fafc;
+            padding: 20px;
+            border-radius: var(--radius-lg);
+            border: 1px solid #e2e8f0;
+            transition: all 0.3s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-lg);
+            border-color: var(--primary-light);
+        }
+
+        .stat-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: var(--radius-full);
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 20px;
+            margin-bottom: 16px;
+        }
+
+        .stat-content h3 {
+            font-size: 28px;
+            font-weight: 700;
+            color: #1e293b;
+            margin-bottom: 4px;
+        }
+
+        .stat-content p {
+            font-size: 14px;
+            color: #64748b;
+            font-weight: 500;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: white;
+            z-index: 1000;
+            transition: left 0.3s ease;
+            box-shadow: var(--shadow-xl);
+            overflow-y: auto;
+        }
+
+        .sidebar.active {
+            left: 0;
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid #e2e8f0;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+        }
+
+        .sidebar-header h2 {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+
+        .sidebar-header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .users-list {
+            padding: 20px;
+        }
+
+        .users-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .users-header h3 {
+            font-size: 18px;
+            color: #1e293b;
+        }
+
+        .search-box {
+            position: relative;
+            width: 100%;
+            margin-bottom: 20px;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 12px 16px 12px 48px;
+            border: 2px solid #e2e8f0;
+            border-radius: var(--radius-full);
+            font-size: 14px;
+            transition: all 0.2s;
+            background: #f8fafc;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--primary);
+            background: white;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .search-box i {
+            position: absolute;
+            left: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #94a3b8;
+        }
+
+        .user-item {
+            display: flex;
+            align-items: center;
+            padding: 16px;
+            border-radius: var(--radius-lg);
+            background: #f8fafc;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 2px solid transparent;
+        }
+
+        .user-item:hover {
+            background: #f1f5f9;
+            transform: translateX(4px);
+        }
+
+        .user-item.active {
+            background: white;
+            border-color: var(--primary);
+            box-shadow: var(--shadow-md);
+        }
+
+        .user-avatar {
+            width: 48px;
+            height: 48px;
+            border-radius: var(--radius-full);
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+            font-size: 18px;
+            margin-right: 16px;
+        }
+
+        .user-info {
+            flex: 1;
+        }
+
+        .user-name {
+            font-weight: 600;
+            color: #1e293b;
+            margin-bottom: 4px;
+        }
+
+        .user-details {
+            display: flex;
+            gap: 12px;
+            font-size: 12px;
+            color: #64748b;
+        }
+
+        .user-meta {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .user-status {
+            width: 10px;
+            height: 10px;
+            border-radius: var(--radius-full);
+            background: #22c55e;
+        }
+
+        .user-status.inactive {
+            background: #94a3b8;
+        }
+
+        .chat-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: white;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            padding: 20px;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: white;
+        }
+
+        .current-user {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .current-user-avatar {
+            width: 56px;
+            height: 56px;
+            border-radius: var(--radius-full);
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+            font-size: 20px;
+        }
+
+        .current-user-info h3 {
+            font-size: 18px;
+            color: #1e293b;
+            margin-bottom: 4px;
+        }
+
+        .current-user-info p {
+            font-size: 14px;
+            color: #64748b;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .chat-actions {
+            display: flex;
+            gap: 12px;
+        }
+
+        .action-btn {
+            width: 44px;
+            height: 44px;
+            border-radius: var(--radius-full);
+            background: #f1f5f9;
+            border: none;
+            color: #475569;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .action-btn:hover {
+            background: #e2e8f0;
+            transform: scale(1.05);
+        }
+
+        .action-btn.primary {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+        }
+
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f8fafc;
+        }
+
+        .message {
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 20px;
+            max-width: 70%;
+            animation: messageSlide 0.3s ease;
+        }
+
+        @keyframes messageSlide {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            align-self: flex-start;
+        }
+
+        .message.admin {
+            align-self: flex-end;
+        }
+
+        .message-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+
+        .message-sender {
+            font-weight: 600;
+            color: #1e293b;
+            font-size: 14px;
+        }
+
+        .message-time {
+            font-size: 12px;
+            color: #94a3b8;
+        }
+
+        .message-bubble {
+            padding: 16px;
+            border-radius: var(--radius-lg);
+            line-height: 1.5;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .message.user .message-bubble {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-bottom-left-radius: var(--radius-sm);
+        }
+
+        .message.admin .message-bubble {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+            border-bottom-right-radius: var(--radius-sm);
+        }
+
+        .message-image {
+            max-width: 300px;
+            border-radius: var(--radius-md);
+            margin-top: 8px;
+            cursor: pointer;
+            box-shadow: var(--shadow-md);
+        }
+
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #94a3b8;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .empty-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        .input-area {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #e2e8f0;
+            box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.05);
+        }
+
+        .input-wrapper {
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+
+        .input-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .admin-action-btn {
+            width: 48px;
+            height: 48px;
+            border-radius: var(--radius-full);
+            background: #f1f5f9;
+            border: none;
+            color: #475569;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .admin-action-btn:hover {
+            background: #e2e8f0;
+            transform: translateY(-2px);
+        }
+
+        .message-input {
+            flex: 1;
+            min-height: 48px;
+            max-height: 120px;
+            padding: 14px 18px;
+            border: 2px solid #e2e8f0;
+            border-radius: var(--radius-full);
+            font-size: 15px;
+            font-family: 'Poppins', sans-serif;
+            resize: none;
+            outline: none;
+            background: #f8fafc;
+            transition: all 0.2s;
+        }
+
+        .message-input:focus {
+            border-color: var(--primary);
+            background: white;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .send-btn {
+            width: 48px;
+            height: 48px;
+            border-radius: var(--radius-full);
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            border: none;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .send-btn:hover {
+            transform: translateY(-2px) scale(1.05);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 999;
+        }
+
+        .overlay.active {
+            display: block;
+        }
+
+        @media (min-width: 768px) {
+            .admin-container {
+                flex-direction: row;
+            }
+            
+            .sidebar {
+                position: relative;
+                left: 0;
+                width: var(--sidebar-width);
+                border-right: 1px solid #e2e8f0;
+            }
+            
+            .menu-toggle {
+                display: none;
+            }
+            
+            .stats-bar {
+                grid-template-columns: repeat(4, 1fr);
+            }
+        }
+
+        @media (max-width: 767px) {
+            .header-right {
+                display: none;
+            }
+            
+            .chat-header {
+                padding: 16px;
+            }
+            
+            .current-user {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 8px;
+            }
+            
+            .chat-actions {
+                position: absolute;
+                top: 16px;
+                right: 16px;
+            }
+            
+            .message {
+                max-width: 85%;
+            }
+            
+            .message-image {
+                max-width: 100%;
+            }
+        }
+
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            gap: 20px;
+        }
+
+        .spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid #e2e8f0;
+            border-top-color: var(--primary);
+            border-radius: var(--radius-full);
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: var(--radius-full);
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: white;
+            padding: 16px 20px;
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-xl);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            z-index: 10000;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .notification.success {
+            border-left: 4px solid var(--success);
+        }
+
+        .notification.error {
+            border-left: 4px solid var(--danger);
+        }
+
+        .notification.info {
+            border-left: 4px solid var(--primary);
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-container">
+        <header class="admin-header">
+            <div class="header-left">
+                <button class="menu-toggle" onclick="toggleSidebar()">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <div class="brand">
+                    <div class="brand-logo">FM</div>
+                    <div class="brand-text">
+                        <h1>Flexia Merchant</h1>
+                        <p>Admin Dashboard</p>
+                    </div>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="admin-badge">
+                    <i class="fas fa-shield-alt"></i>
+                    <span>Admin Panel</span>
+                </div>
+                <button class="logout-btn" onclick="logout()">
+                    <i class="fas fa-sign-out-alt"></i>
+                    Logout
+                </button>
+            </div>
+        </header>
+
+        <div class="stats-bar">
+            <div class="stat-card">
+                <div class="stat-icon">
+                    <i class="fas fa-users"></i>
+                </div>
+                <div class="stat-content">
+                    <h3 id="totalUsers">0</h3>
+                    <p>Total Users</p>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">
+                    <i class="fas fa-comments"></i>
+                </div>
+                <div class="stat-content">
+                    <h3 id="totalMessages">0</h3>
+                    <p>Total Messages</p>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">
+                    <i class="fas fa-chart-line"></i>
+                </div>
+                <div class="stat-content">
+                    <h3 id="activeChats">0</h3>
+                    <p>Active Chats</p>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">
+                    <i class="fas fa-user-check"></i>
+                </div>
+                <div class="stat-content">
+                    <h3 id="uniqueUsers">0</h3>
+                    <p>Unique Users</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="sidebar" id="sidebar">
+                <div class="sidebar-header">
+                    <h2>User Management</h2>
+                    <p>Manage all user conversations</p>
+                </div>
+                
+                <div class="users-list">
+                    <div class="search-box">
+                        <i class="fas fa-search"></i>
+                        <input type="text" id="userSearch" placeholder="Search users..." onkeyup="searchUsers()">
+                    </div>
+                    
+                    <div class="users-header">
+                        <h3>Active Conversations</h3>
+                        <button class="action-btn" onclick="refreshUsers()" title="Refresh">
+                            <i class="fas fa-sync-alt"></i>
+                        </button>
+                    </div>
+                    
+                    <div class="users-container" id="usersContainer">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            <p>Loading users...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="overlay" id="overlay" onclick="toggleSidebar()"></div>
+
+            <div class="chat-area" id="chatArea">
+                <div class="chat-header">
+                    <div class="current-user">
+                        <div class="current-user-avatar" id="currentUserAvatar">?</div>
+                        <div class="current-user-info">
+                            <h3 id="currentUserName">Select a user to chat</h3>
+                            <p id="currentUserDetails">
+                                <i class="fas fa-info-circle"></i>
+                                Choose from the sidebar
+                            </p>
+                        </div>
+                    </div>
+                    <div class="chat-actions">
+                        <button class="action-btn" onclick="clearChat()" title="Clear chat">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                        <button class="action-btn" onclick="exportChat()" title="Export chat">
+                            <i class="fas fa-download"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="messages-container" id="messagesContainer">
+                    <div class="empty-state" id="emptyState">
+                        <div class="empty-icon">
+                            <i class="fas fa-comment-slash"></i>
+                        </div>
+                        <h3>No conversation selected</h3>
+                        <p>Select a user from the sidebar to view and send messages</p>
+                    </div>
+                </div>
+
+                <div class="input-area" id="inputArea" style="display: none;">
+                    <div class="input-wrapper">
+                        <div class="input-actions">
+                            <button class="admin-action-btn" onclick="uploadAdminImage()" title="Upload image">
+                                <i class="fas fa-image"></i>
+                            </button>
+                        </div>
+                        <textarea 
+                            class="message-input" 
+                            id="adminMessageInput" 
+                            placeholder="Type your message as Flexia Merchant..."
+                            rows="1"
+                            oninput="autoResize(this)"
+                            onkeydown="handleAdminKeyDown(event)"
+                        ></textarea>
+                        <button class="send-btn" onclick="sendAdminMessage()" title="Send message">
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <input type="file" id="adminImageInput" accept="image/*" style="display: none;" onchange="handleAdminImageSelect(event)">
+    </div>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    
+    <script>
+        let socket;
+        let selectedUser = null;
+        let allUsers = [];
+        let isSidebarOpen = false;
+        let uniqueDeviceIds = new Set();
+
+        function initAdmin() {
+            connectSocket();
+            setupEventListeners();
+            initUI();
+        }
+
+        function connectSocket() {
+            socket = io({
+                transports: ['websocket', 'polling'],
+                reconnection: true,
+                reconnectionAttempts: 5,
+                reconnectionDelay: 1000
+            });
+
+            socket.on('connect', () => {
+                console.log('✅ Admin connected');
+                updateConnectionStatus(true);
+                loadUsers();
+                setInterval(loadUsers, 30000);
+            });
+
+            socket.on('users_list', (data) => {
+                console.log('📋 Users list received:', data.total, 'users');
+                displayUsers(data.users);
+                updateStats(data.users);
+            });
+
+            socket.on('user_messages', (data) => {
+                console.log('💬 Messages received for:', data.device_id);
+                if (selectedUser && data.device_id === selectedUser.device_id) {
+                    displayMessages(data.messages);
+                }
+            });
+
+            socket.on('receive_message', (data) => {
+                console.log('📨 Message received:', data);
+                
+                if (selectedUser && data.device_id === selectedUser.device_id) {
+                    addMessageToChat(data);
+                }
+            });
+
+            socket.on('new_user_message', (data) => {
+                console.log('🔔 New user message notification:', data);
+                if (selectedUser && data.device_id !== selectedUser.device_id) {
+                    showNotification('New message from ' + data.sender, 'info');
+                }
+                loadUsers();
+            });
+
+            socket.on('error', (data) => {
+                console.error('❌ Socket error:', data);
+                showNotification(data.message, 'error');
+            });
+
+            socket.on('disconnect', () => {
+                console.log('🔌 Admin disconnected');
+                updateConnectionStatus(false);
+            });
+
+            socket.on('connect_error', (error) => {
+                console.error('❌ Connection error:', error);
+                updateConnectionStatus(false);
+            });
+        }
+
+        function updateConnectionStatus(connected) {
+            console.log('🔄 Connection status:', connected ? 'Connected' : 'Disconnected');
+        }
+
+        function loadUsers() {
+            if (socket && socket.connected) {
+                socket.emit('get_all_users', {
+                    is_admin: true
+                });
+            }
+        }
+
+        function displayUsers(users) {
+            allUsers = users;
+            
+            // Track unique device IDs
+            uniqueDeviceIds.clear();
+            const userMap = new Map();
+            
+            // Group users by device_id to handle duplicates
+            users.forEach(user => {
+                uniqueDeviceIds.add(user.device_id);
+                if (!userMap.has(user.device_id)) {
+                    userMap.set(user.device_id, user);
+                } else {
+                    // If duplicate exists, keep the one with more messages
+                    const existing = userMap.get(user.device_id);
+                    if (user.message_count > existing.message_count) {
+                        userMap.set(user.device_id, user);
+                    }
+                }
+            });
+            
+            // Convert map back to array
+            const uniqueUsers = Array.from(userMap.values());
+            
+            const container = document.getElementById('usersContainer');
+            
+            if (uniqueUsers.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">
+                            <i class="fas fa-user-slash"></i>
+                        </div>
+                        <h3>No active users</h3>
+                        <p>Users will appear here when they connect</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            container.innerHTML = uniqueUsers.map(user => `
+                <div class="user-item ${selectedUser?.device_id === user.device_id ? 'active' : ''}" 
+                     onclick="selectUser('${user.device_id}')">
+                    <div class="user-avatar">${user.username.charAt(0)}</div>
+                    <div class="user-info">
+                        <div class="user-name">${user.username}</div>
+                        <div class="user-details">
+                            <div class="user-meta">
+                                <i class="fas fa-comment"></i>
+                                <span>${user.message_count} messages</span>
+                            </div>
+                            <div class="user-meta">
+                                <i class="fas fa-clock"></i>
+                                <span>${formatTimeAgo(user.created_at)}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="user-status ${user.message_count > 0 ? '' : 'inactive'}"></div>
+                </div>
+            `).join('');
+        }
+
+        function updateStats(users) {
+            // Group by device_id to get unique users
+            const uniqueUserMap = new Map();
+            users.forEach(user => {
+                if (!uniqueUserMap.has(user.device_id)) {
+                    uniqueUserMap.set(user.device_id, user);
+                } else {
+                    const existing = uniqueUserMap.get(user.device_id);
+                    if (user.message_count > existing.message_count) {
+                        uniqueUserMap.set(user.device_id, user);
+                    }
+                }
+            });
+            
+            const uniqueUsers = Array.from(uniqueUserMap.values());
+            const totalUniqueUsers = uniqueUsers.length;
+            const totalMessages = uniqueUsers.reduce((sum, user) => sum + user.message_count, 0);
+            const activeChats = uniqueUsers.filter(u => u.message_count > 0).length;
+            
+            document.getElementById('totalUsers').textContent = users.length;
+            document.getElementById('totalMessages').textContent = totalMessages.toLocaleString();
+            document.getElementById('activeChats').textContent = activeChats;
+            document.getElementById('uniqueUsers').textContent = totalUniqueUsers;
+        }
+
+        function formatTimeAgo(timestamp) {
+            const now = new Date();
+            const time = new Date(timestamp);
+            const diffMs = now - time;
+            const diffMins = Math.floor(diffMs / 60000);
+            
+            if (diffMins < 1) return 'just now';
+            if (diffMins < 60) return `${diffMins}m ago`;
+            if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
+            return `${Math.floor(diffMins / 1440)}d ago`;
+        }
+
+        function searchUsers() {
+            const searchTerm = document.getElementById('userSearch').value.toLowerCase();
+            
+            // Group users by device_id first
+            const userMap = new Map();
+            allUsers.forEach(user => {
+                if (!userMap.has(user.device_id)) {
+                    userMap.set(user.device_id, user);
+                } else {
+                    const existing = userMap.get(user.device_id);
+                    if (user.message_count > existing.message_count) {
+                        userMap.set(user.device_id, user);
+                    }
+                }
+            });
+            
+            const uniqueUsers = Array.from(userMap.values());
+            const filteredUsers = uniqueUsers.filter(user => 
+                user.username.toLowerCase().includes(searchTerm) ||
+                user.device_id.toLowerCase().includes(searchTerm)
+            );
+            
+            const container = document.getElementById('usersContainer');
+            if (filteredUsers.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-search"></i>
+                        <p>No users found</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            container.innerHTML = filteredUsers.map(user => `
+                <div class="user-item ${selectedUser?.device_id === user.device_id ? 'active' : ''}" 
+                     onclick="selectUser('${user.device_id}')">
+                    <div class="user-avatar">${user.username.charAt(0)}</div>
+                    <div class="user-info">
+                        <div class="user-name">${user.username}</div>
+                        <div class="user-details">
+                            <span>${user.message_count} messages</span>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function refreshUsers() {
+            loadUsers();
+            showNotification('Users list refreshed', 'success');
+        }
+
+        function selectUser(deviceId) {
+            const user = allUsers.find(u => u.device_id === deviceId);
+            if (!user) return;
+            
+            selectedUser = user;
+            
+            updateSelectedUserUI(user);
+            
+            if (socket && socket.connected) {
+                socket.emit('get_user_messages', {
+                    device_id: deviceId,
+                    is_admin: true
+                });
+            }
+            
+            if (window.innerWidth < 768) {
+                closeSidebar();
+            }
+        }
+
+        function updateSelectedUserUI(user) {
+            document.getElementById('currentUserAvatar').textContent = user.username.charAt(0);
+            document.getElementById('currentUserName').textContent = user.username;
+            document.getElementById('currentUserDetails').innerHTML = `
+                <i class="fas fa-id-card"></i>
+                Device ID: ${user.device_id.substring(0, 12)}... |
+                <i class="fas fa-comment"></i>
+                ${user.message_count} messages
+            `;
+            
+            document.getElementById('inputArea').style.display = 'block';
+            document.getElementById('emptyState').style.display = 'none';
+            
+            document.querySelectorAll('.user-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            
+            const selectedItem = Array.from(document.querySelectorAll('.user-item'))
+                .find(item => item.querySelector('.user-name').textContent === user.username);
+            
+            if (selectedItem) {
+                selectedItem.classList.add('active');
+            }
+        }
+
+        function displayMessages(messages) {
+            const container = document.getElementById('messagesContainer');
+            container.innerHTML = '';
+            
+            if (messages.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">
+                            <i class="fas fa-comments"></i>
+                        </div>
+                        <h3>No messages yet</h3>
+                        <p>Start a conversation with ${selectedUser.username}</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            messages.forEach(message => {
+                addMessageToChat(message);
+            });
+            
+            scrollToBottom();
+        }
+
+        function addMessageToChat(data) {
+            const container = document.getElementById('messagesContainer');
+            
+            const emptyState = document.getElementById('emptyState');
+            if (emptyState && emptyState.style.display !== 'none') {
+                emptyState.style.display = 'none';
+            }
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${data.is_admin ? 'admin' : 'user'}`;
+            
+            const time = new Date(data.timestamp).toLocaleTimeString([], { 
+                hour: '2-digit', 
+                minute: '2-digit' 
+            });
+            
+            let content = '';
+            if (data.type === 'image') {
+                content = `
+                    <img src="${data.message}" 
+                         alt="Image" 
+                         class="message-image"
+                         onclick="openImageModal('${data.message}')">
+                `;
+            } else {
+                content = `<p>${escapeHtml(data.message)}</p>`;
+            }
+            
+            messageDiv.innerHTML = `
+                <div class="message-header">
+                    <div class="message-sender">${data.is_admin ? 'You (Flexia Merchant)' : data.sender}</div>
+                    <div class="message-time">${time}</div>
+                </div>
+                <div class="message-bubble">
+                    ${content}
+                </div>
+            `;
+            
+            container.appendChild(messageDiv);
+            scrollToBottom();
+        }
+
+        function sendAdminMessage() {
+            const input = document.getElementById('adminMessageInput');
+            const message = input.value.trim();
+            
+            if (message && socket && socket.connected && selectedUser) {
+                console.log('📤 Sending admin message to:', selectedUser.device_id);
+                
+                socket.emit('admin_message', {
+                    device_id: selectedUser.device_id,
+                    message: message,
+                    type: 'text',
+                    is_admin: true
+                });
+                
+                input.value = '';
+                autoResize(input);
+            } else {
+                if (!socket || !socket.connected) {
+                    showNotification('Not connected to server', 'error');
+                } else if (!selectedUser) {
+                    showNotification('No user selected', 'error');
+                }
+            }
+        }
+
+        function handleAdminKeyDown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendAdminMessage();
+            }
+        }
+
+        function uploadAdminImage() {
+            document.getElementById('adminImageInput').click();
+        }
+
+        function handleAdminImageSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            if (!file.type.match('image.*')) {
+                showNotification('Please select an image file', 'error');
+                return;
+            }
+            
+            if (file.size > 10 * 1024 * 1024) {
+                showNotification('Image size should be less than 10MB', 'error');
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                if (socket && socket.connected && selectedUser) {
+                    socket.emit('upload_image', {
+                        device_id: selectedUser.device_id,
+                        image: e.target.result,
+                        filename: file.name,
+                        is_admin: true
+                    });
+                    
+                    showNotification('Sending image...', 'info');
+                }
+            };
+            reader.readAsDataURL(file);
+            
+            event.target.value = '';
+        }
+
+        function clearChat() {
+            if (selectedUser && confirm('Clear all messages with this user?')) {
+                const container = document.getElementById('messagesContainer');
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">
+                            <i class="fas fa-comments"></i>
+                        </div>
+                        <h3>Chat cleared</h3>
+                        <p>Start a new conversation with ${selectedUser.username}</p>
+                    </div>
+                `;
+            }
+        }
+
+        function exportChat() {
+            if (!selectedUser) {
+                showNotification('Select a user first', 'error');
+                return;
+            }
+            
+            const messages = Array.from(document.querySelectorAll('.message')).map(msg => {
+                const sender = msg.querySelector('.message-sender').textContent;
+                const time = msg.querySelector('.message-time').textContent;
+                const text = msg.querySelector('.message-bubble p')?.textContent || '[Image]';
+                return `${time} - ${sender}: ${text}`;
+            }).join('\n');
+            
+            const blob = new Blob([messages], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `chat_${selectedUser.username}_${new Date().toISOString().split('T')[0]}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+            
+            showNotification('Chat exported successfully', 'success');
+        }
+
+        function openImageModal(src) {
+            const modal = document.createElement('div');
+            modal.className = 'image-modal';
+            modal.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.9);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 10000;
+            `;
+            modal.innerHTML = `
+                <div style="position: relative; max-width: 90%; max-height: 90%;">
+                    <img src="${src}" style="max-width: 100%; max-height: 90vh; border-radius: 12px;">
+                    <button onclick="this.parentElement.parentElement.remove()" 
+                            style="position: absolute; top: 20px; right: 20px; width: 40px; height: 40px; 
+                                   background: white; border: none; border-radius: 50%; cursor: pointer; 
+                                   font-size: 20px;">×</button>
+                </div>
+            `;
+            modal.onclick = (e) => {
+                if (e.target === modal) modal.remove();
+            };
+            document.body.appendChild(modal);
+        }
+
+        function autoResize(textarea) {
+            textarea.style.height = 'auto';
+            textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+        }
+
+        function scrollToBottom() {
+            const container = document.getElementById('messagesContainer');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function showNotification(message, type = 'info') {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            
+            const icon = type === 'success' ? 'check-circle' : 
+                        type === 'error' ? 'exclamation-circle' : 
+                        'info-circle';
+            
+            notification.innerHTML = `
+                <i class="fas fa-${icon}"></i>
+                <span>${message}</span>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.style.animation = 'slideOut 0.3s ease';
+                setTimeout(() => notification.remove(), 300);
+            }, 3000);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('overlay');
+            
+            if (window.innerWidth < 768) {
+                isSidebarOpen = !isSidebarOpen;
+                sidebar.classList.toggle('active', isSidebarOpen);
+                overlay.classList.toggle('active', isSidebarOpen);
+            }
+        }
+
+        function closeSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('overlay');
+            sidebar.classList.remove('active');
+            overlay.classList.remove('active');
+            isSidebarOpen = false;
+        }
+
+        function logout() {
+            if (confirm('Are you sure you want to logout?')) {
+                window.location.href = '/';
+            }
+        }
+
+        function setupEventListeners() {
+            window.addEventListener('resize', () => {
+                if (window.innerWidth >= 768) {
+                    closeSidebar();
+                }
+            });
+        }
+
+        function initUI() {
+            console.log('🎨 UI Initialized');
+        }
+
+        document.addEventListener('DOMContentLoaded', initAdmin);
+    </script>
+</body>
+</html>
