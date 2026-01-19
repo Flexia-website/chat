@@ -1,4 +1,7 @@
 import os
+from flask import Flask, send_file, jsonify, request, session, redirect, url_for
+from flask_socketio import SocketIO, emit, join_room
+from flask_cors import CORS
 import sqlite3
 import base64
 import uuid
@@ -8,12 +11,8 @@ import hashlib
 from datetime import datetime, timedelta
 from functools import wraps
 
-from flask import Flask, send_from_directory, jsonify, request, session, redirect, url_for
-from flask_socketio import SocketIO, emit, join_room
-from flask_cors import CORS
-
 # Initialize Flask app
-app = Flask(__name__, static_folder='static', static_url_path='')
+app = Flask(__name__)
 
 # Configuration
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -36,7 +35,6 @@ socketio = SocketIO(app,
 
 # Database setup
 def init_db():
-    """Initialize database with tables"""
     conn = sqlite3.connect('flexia_chat.db')
     c = conn.cursor()
     
@@ -78,24 +76,34 @@ init_db()
 
 # Helper functions
 def get_db():
-    """Get database connection"""
     conn = sqlite3.connect('flexia_chat.db')
     conn.row_factory = sqlite3.Row
     return conn
 
 def check_admin_password(password):
-    """Check admin password against hash"""
     password_hash = hashlib.sha256(password.encode()).hexdigest()
     return password_hash == app.config['ADMIN_PASSWORD_HASH']
 
 def update_user_activity(device_id):
-    """Update last_active timestamp for a user"""
     conn = get_db()
     c = conn.cursor()
     c.execute('UPDATE users SET last_active = ? WHERE device_id = ?', 
               (datetime.now().isoformat(), device_id))
     conn.commit()
     conn.close()
+
+# Authentication decorators
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('admin_logged_in'):
+            return redirect('/admin/login')
+        return f(*args, **kwargs)
+    return decorated_function
+
+# In-memory storage for admin sessions
+admin_sessions = {}
+user_rooms = {}
 
 def cleanup_inactive_users():
     """Delete users inactive for more than 2 days and their associated files"""
@@ -153,161 +161,53 @@ def run_cleanup_scheduler():
 cleanup_thread = threading.Thread(target=run_cleanup_scheduler, daemon=True)
 cleanup_thread.start()
 
-# Authentication decorators
-def admin_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if not session.get('admin_logged_in'):
-            return redirect(url_for('admin_login'))
-        return f(*args, **kwargs)
-    return decorated_function
-
-# In-memory storage for admin sessions
-admin_sessions = {}
-user_rooms = {}
-
-# ==============================================
-# HTTP ROUTES
-# ==============================================
-
+# HTTP Routes - SERVE FILES FROM ROOT
 @app.route('/')
 def index():
     """Serve the user chat interface"""
-    return send_from_directory('static', 'index.html')
+    try:
+        return send_file('index.html')
+    except:
+        return '''
+        <h1>Flexia Merchant Chat</h1>
+        <p>Chat interface loading...</p>
+        <a href="/admin/login">Admin Panel</a>
+        '''
 
 @app.route('/admin/login', methods=['GET', 'POST'])
 def admin_login():
-    """Admin login page"""
     if request.method == 'POST':
         password = request.form.get('password')
-        
         if check_admin_password(password):
             session['admin_logged_in'] = True
-            session['admin_ip'] = request.remote_addr
-            session['admin_login_time'] = datetime.now().isoformat()
-            session.permanent = True
-            return redirect(url_for('admin_panel'))
-        else:
-            return '''
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>Login Failed</title>
-                    <script>
-                        alert("Incorrect password!");
-                        window.location.href = "/admin/login";
-                    </script>
-                </head>
-                <body>
-                    <p>Redirecting...</p>
-                </body>
-                </html>
-            '''
+            return redirect('/admin')
+        return 'Invalid password', 401
     
-    # Return login page
     return '''
     <!DOCTYPE html>
     <html>
-    <head>
-        <title>Flexia Merchant • Admin Login</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                min-height: 100vh;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                padding: 20px;
-            }
-            .login-container {
-                background: white;
-                padding: 40px;
-                border-radius: 20px;
-                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-                width: 100%;
-                max-width: 400px;
-                text-align: center;
-            }
-            .logo { font-size: 48px; margin-bottom: 20px; color: #667eea; }
-            h1 { color: #333; margin-bottom: 10px; font-size: 24px; }
-            .subtitle { color: #666; margin-bottom: 30px; font-size: 14px; }
-            .input-group { margin-bottom: 20px; text-align: left; }
-            label { display: block; margin-bottom: 8px; color: #555; font-weight: 500; }
-            input[type="password"] {
-                width: 100%; padding: 15px; border: 2px solid #e0e0e0;
-                border-radius: 10px; font-size: 16px; transition: all 0.3s;
-            }
-            input[type="password"]:focus {
-                outline: none; border-color: #667eea;
-                box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-            }
-            button {
-                width: 100%; padding: 16px;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white; border: none; border-radius: 10px;
-                font-size: 16px; font-weight: 600; cursor: pointer;
-                transition: all 0.3s; margin-top: 10px;
-            }
-            button:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
-            }
-            .footer { margin-top: 30px; font-size: 12px; color: #888; }
-            .error { color: #ff4757; font-size: 14px; margin-top: 10px; }
-        </style>
-    </head>
+    <head><title>Admin Login</title></head>
     <body>
-        <div class="login-container">
-            <div class="logo">🔒</div>
-            <h1>Flexia Merchant Admin</h1>
-            <p class="subtitle">Secure administration panel</p>
-            
-            <form method="POST">
-                <div class="input-group">
-                    <label for="password">Admin Password</label>
-                    <input type="password" id="password" name="password" 
-                           placeholder="Enter admin password" required autofocus>
-                </div>
-                <button type="submit">Login to Admin Panel</button>
-            </form>
-            
-            <div class="footer">
-                &copy; 2024 Flexia Merchant Chat System
-            </div>
-        </div>
+        <form method="POST">
+            <input type="password" name="password" placeholder="Admin password" required>
+            <button type="submit">Login</button>
+        </form>
     </body>
     </html>
     '''
 
-@app.route('/admin/logout')
-def admin_logout():
-    """Logout admin"""
-    session.pop('admin_logged_in', None)
-    return redirect(url_for('admin_login'))
-
 @app.route('/admin')
 @admin_required
 def admin_panel():
-    """Serve the admin panel"""
-    return send_from_directory('static', 'admin.html')
+    try:
+        return send_file('admin.html')
+    except:
+        return 'Admin panel not found', 404
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
-    """Serve uploaded files"""
+    from flask import send_from_directory
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
-
-@app.route('/api/cleanup', methods=['POST'])
-@admin_required
-def manual_cleanup():
-    """Manual cleanup endpoint"""
-    try:
-        count = cleanup_inactive_users()
-        return jsonify({'success': True, 'message': f'Cleanup completed. Deleted {count} users.'})
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/stats')
 @admin_required
@@ -346,15 +246,15 @@ def get_stats():
     finally:
         conn.close()
 
-@app.route('/api/health')
-def health_check():
-    """Health check endpoint"""
-    return jsonify({
-        'status': 'ok',
-        'timestamp': datetime.now().isoformat(),
-        'service': 'Flexia Merchant Chat',
-        'version': '2.0.0'
-    })
+@app.route('/api/cleanup', methods=['POST'])
+@admin_required
+def manual_cleanup():
+    """Manual cleanup endpoint"""
+    try:
+        count = cleanup_inactive_users()
+        return jsonify({'success': True, 'message': f'Cleanup completed. Deleted {count} users.'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 # ==============================================
 # SOCKET.IO EVENTS
@@ -781,26 +681,7 @@ def handle_delete_user(data):
         print(f'❌ Error deleting user: {e}')
         emit('error', {'message': 'Failed to delete user'})
 
-# ==============================================
-# APPLICATION STARTUP
-# ==============================================
-
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    print('🚀 Starting Flexia Merchant Chat Server...')
-    print('=' * 50)
-    print(f'📁 Upload folder: {os.path.abspath(UPLOAD_FOLDER)}')
-    print(f'💾 Database: {os.path.abspath("flexia_chat.db")}')
-    print('🔐 Admin password protected')
-    print('📊 Cleanup scheduler active (runs every hour)')
-    print('🗑️ Users inactive for 2+ days will be auto-deleted')
-    print('=' * 50)
-    print(f'🌐 User Chat: http://localhost:{port}')
-    print(f'👑 Admin Panel: http://localhost:{port}/admin/login')
-    print('=' * 50)
-    
-    socketio.run(app, 
-                 host='0.0.0.0', 
-                 port=port, 
-                 debug=True, 
-                 allow_unsafe_werkzeug=True)
+    print(f'🚀 Server starting on port {port}')
+    socketio.run(app, host='0.0.0.0', port=port, debug=True, allow_unsafe_werkzeug=True)
