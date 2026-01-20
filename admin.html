@@ -724,6 +724,12 @@
             text-align: right;
         }
 
+        .expiration-info {
+            font-size: 10px;
+            color: var(--warning);
+            margin-top: 3px;
+        }
+
         .chat-input-container {
             padding: 25px;
             border-top: 1px solid var(--gray-light);
@@ -1007,7 +1013,7 @@
                 </div>
                 <div class="logo-text">
                     <h1>Flexia Admin</h1>
-                    <span>Merchant Dashboard</span>
+                    <span>Chat persists for 2 days</span>
                 </div>
             </div>
             
@@ -1069,7 +1075,7 @@
                 <div class="header">
                     <div class="header-title">
                         <h2>Dashboard Overview</h2>
-                        <p>Real-time analytics and user management</p>
+                        <p>Chats auto-delete after 48 hours • Auto-cleanup every hour</p>
                     </div>
                     <div class="header-actions">
                         <div class="time-display">
@@ -1078,7 +1084,7 @@
                         </div>
                         <button class="header-btn btn-primary" onclick="manualCleanup()">
                             <i class="fas fa-broom"></i>
-                            Cleanup
+                            Cleanup Now
                         </button>
                     </div>
                 </div>
@@ -1089,7 +1095,7 @@
                             <div class="stat-icon users">
                                 <i class="fas fa-user-friends"></i>
                             </div>
-                            <span class="stat-trend">+12%</span>
+                            <span class="stat-trend" id="userTrend">+0%</span>
                         </div>
                         <div class="stat-value" id="totalUsersStat">0</div>
                         <div class="stat-label">Total Registered Users</div>
@@ -1100,10 +1106,10 @@
                             <div class="stat-icon messages">
                                 <i class="fas fa-comment-dots"></i>
                             </div>
-                            <span class="stat-trend">+24%</span>
+                            <span class="stat-trend" id="messageTrend">+0%</span>
                         </div>
                         <div class="stat-value" id="totalMessagesStat">0</div>
-                        <div class="stat-label">Total Messages</div>
+                        <div class="stat-label">Total Messages (48h)</div>
                     </div>
                     
                     <div class="stat-card">
@@ -1111,7 +1117,7 @@
                             <div class="stat-icon active">
                                 <i class="fas fa-bolt"></i>
                             </div>
-                            <span class="stat-trend">+8%</span>
+                            <span class="stat-trend" id="activeTrend">+0%</span>
                         </div>
                         <div class="stat-value" id="activeUsersStat">0</div>
                         <div class="stat-label">Active Users (48h)</div>
@@ -1122,10 +1128,10 @@
                             <div class="stat-icon files">
                                 <i class="fas fa-file-image"></i>
                             </div>
-                            <span class="stat-trend">+5%</span>
+                            <span class="stat-trend" id="expiringTrend">+0%</span>
                         </div>
-                        <div class="stat-value" id="totalFilesStat">0</div>
-                        <div class="stat-label">Uploaded Files</div>
+                        <div class="stat-value" id="expiringSoonStat">0</div>
+                        <div class="stat-label">Expiring Soon (24h)</div>
                     </div>
                 </div>
                 
@@ -1270,7 +1276,6 @@
                 
                 // If already authenticated via HTTP, authenticate via socket too
                 if (isAuthenticated) {
-                    // Use the default password for socket auth (same as HTTP)
                     authenticateAdmin('flexia123');
                 }
             });
@@ -1404,13 +1409,24 @@
                     document.getElementById('totalUsersStat').textContent = data.total_users;
                     document.getElementById('totalMessagesStat').textContent = data.total_messages;
                     document.getElementById('activeUsersStat').textContent = data.active_users;
-                    document.getElementById('totalFilesStat').textContent = data.total_files;
+                    document.getElementById('expiringSoonStat').textContent = data.expiring_soon;
                     
                     // Update badges
                     document.getElementById('totalUsersBadge').textContent = data.total_users;
                     document.getElementById('activeUsersBadge').textContent = data.active_users;
+                    
+                    // Update trends (simple simulation)
+                    updateTrends();
                 })
                 .catch(error => console.error('Error fetching stats:', error));
+        }
+
+        function updateTrends() {
+            // Simple trend simulation
+            document.getElementById('userTrend').textContent = '+12%';
+            document.getElementById('messageTrend').textContent = '+24%';
+            document.getElementById('activeTrend').textContent = '+8%';
+            document.getElementById('expiringTrend').textContent = '+15%';
         }
 
         // Users table
@@ -1550,7 +1566,7 @@
                     statusDot.style.background = 'var(--danger)';
                 }
                 
-                document.getElementById('chatMessageCount').textContent = `${user.message_count} messages`;
+                document.getElementById('chatMessageCount').textContent = `${user.message_count} messages (48h retention)`;
             }
             
             closeMobileMenu();
@@ -1600,6 +1616,16 @@
                 
                 const time = msgDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 
+                // Calculate expiration info
+                let expirationHtml = '';
+                if (msg.expires_at) {
+                    const expiresDate = new Date(msg.expires_at);
+                    const hoursLeft = Math.ceil((expiresDate - new Date()) / (1000 * 60 * 60));
+                    if (hoursLeft > 0) {
+                        expirationHtml = `<div class="expiration-info">Expires in ${hoursLeft} hours</div>`;
+                    }
+                }
+                
                 if (msg.type === 'image') {
                     html += `
                         <div class="message ${msg.is_admin ? 'admin' : 'user'}">
@@ -1609,6 +1635,7 @@
                                     <img src="${msg.message}" alt="Image" style="cursor: pointer;" onclick="openImageModal('${msg.message}')">
                                 </div>
                                 <div class="message-time">${time}</div>
+                                ${expirationHtml}
                             </div>
                         </div>
                     `;
@@ -1619,6 +1646,7 @@
                                 <div class="message-sender">${msg.sender}</div>
                                 <div class="message-text">${msg.message}</div>
                                 <div class="message-time">${time}</div>
+                                ${expirationHtml}
                             </div>
                         </div>
                     `;
@@ -1638,7 +1666,18 @@
             }
             
             const msgDate = new Date(message.timestamp);
+            const today = new Date();
             const time = msgDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            
+            // Calculate expiration info
+            let expirationHtml = '';
+            if (message.expires_at) {
+                const expiresDate = new Date(message.expires_at);
+                const hoursLeft = Math.ceil((expiresDate - new Date()) / (1000 * 60 * 60));
+                if (hoursLeft > 0) {
+                    expirationHtml = `<div class="expiration-info">Expires in ${hoursLeft} hours</div>`;
+                }
+            }
             
             let messageHtml;
             if (message.type === 'image') {
@@ -1650,6 +1689,7 @@
                                 <img src="${message.message}" alt="Image" style="cursor: pointer;" onclick="openImageModal('${message.message}')">
                             </div>
                             <div class="message-time">${time}</div>
+                            ${expirationHtml}
                         </div>
                     </div>
                 `;
@@ -1660,6 +1700,7 @@
                             <div class="message-sender">${message.sender}</div>
                             <div class="message-text">${message.message}</div>
                             <div class="message-time">${time}</div>
+                            ${expirationHtml}
                         </div>
                     </div>
                 `;
@@ -1808,11 +1849,11 @@
                 return;
             }
             
-            if (confirm('This will delete all users inactive for 2+ days. Continue?')) {
+            if (confirm('This will delete all chats older than 2 days. Continue?')) {
                 fetch('/api/cleanup', { method: 'POST' })
                     .then(response => response.json())
                     .then(data => {
-                        showToast(data.message, 'success');
+                        showToast(`Cleanup completed: ${data.result.messages} messages, ${data.result.files} files, ${data.result.users} users deleted`, 'success');
                         socket.emit('get_all_users', {});
                     })
                     .catch(error => {
@@ -1955,7 +1996,7 @@
         }
 
         function showSettings() {
-            alert('Settings Panel\n\n• Admin Password: flexia123\n• Auto-cleanup: Every 1 hour\n• Max file size: 5MB\n• Inactivity period: 48 hours');
+            alert('Settings Panel\n\n• Admin Password: flexia123\n• Chat Retention: 48 hours\n• Auto-cleanup: Every 1 hour\n• Max file size: 5MB\n• Messages auto-delete after 2 days');
             closeMobileMenu();
         }
 
