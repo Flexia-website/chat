@@ -47,7 +47,7 @@ def init_db():
         last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
     
-    # Messages table
+    # Messages table with 2-day expiration
     c.execute('''CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         device_id TEXT NOT NULL,
@@ -56,18 +56,26 @@ def init_db():
         type TEXT DEFAULT 'text',
         is_admin BOOLEAN DEFAULT 0,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP DEFAULT (datetime('now', '+2 days')),
         FOREIGN KEY (device_id) REFERENCES users(device_id) ON DELETE CASCADE
     )''')
     
-    # Files table
+    # Files table with 2-day expiration
     c.execute('''CREATE TABLE IF NOT EXISTS uploaded_files (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         device_id TEXT NOT NULL,
         filename TEXT NOT NULL,
         filepath TEXT NOT NULL,
         uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP DEFAULT (datetime('now', '+2 days')),
         FOREIGN KEY (device_id) REFERENCES users(device_id) ON DELETE CASCADE
     )''')
+    
+    # Create indexes
+    c.execute('CREATE INDEX IF NOT EXISTS idx_messages_device_id ON messages(device_id)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages(expires_at)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_files_expires ON uploaded_files(expires_at)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active)')
     
     conn.commit()
     conn.close()
@@ -92,6 +100,83 @@ def update_user_activity(device_id):
     conn.commit()
     conn.close()
 
+# In-memory storage for sessions
+admin_sessions = {}
+user_rooms = {}
+user_sockets = {}  # device_id -> [socket_ids]
+
+def cleanup_expired_data():
+    """Delete all messages and files older than 2 days"""
+    conn = get_db()
+    c = conn.cursor()
+    
+    deleted_messages = 0
+    deleted_files = 0
+    deleted_users = 0
+    
+    try:
+        # Get current time
+        now = datetime.now().isoformat()
+        
+        # Delete expired messages (older than 2 days)
+        c.execute('DELETE FROM messages WHERE expires_at < ?', (now,))
+        deleted_messages = c.rowcount
+        
+        # Delete expired files
+        c.execute('SELECT filepath FROM uploaded_files WHERE expires_at < ?', (now,))
+        expired_files = c.fetchall()
+        
+        for file_row in expired_files:
+            filepath = file_row[0]
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                    deleted_files += 1
+                except Exception as e:
+                    print(f"❌ Error deleting file: {e}")
+        
+        # Delete expired file records
+        c.execute('DELETE FROM uploaded_files WHERE expires_at < ?', (now,))
+        
+        # Delete users who have been inactive for 3 days AND have no messages
+        cutoff_3days = (datetime.now() - timedelta(days=3)).isoformat()
+        c.execute('''DELETE FROM users 
+                     WHERE last_active < ? 
+                     AND device_id NOT IN (
+                         SELECT DISTINCT device_id FROM messages
+                     )''', (cutoff_3days,))
+        deleted_users = c.rowcount
+        
+        conn.commit()
+        
+        if deleted_messages > 0 or deleted_files > 0 or deleted_users > 0:
+            print(f"🗑️ Cleanup: {deleted_messages} messages, {deleted_files} files, {deleted_users} users deleted")
+        
+        return {
+            'messages': deleted_messages,
+            'files': deleted_files,
+            'users': deleted_users
+        }
+        
+    except Exception as e:
+        print(f"❌ Cleanup error: {e}")
+        return {'error': str(e)}
+    finally:
+        conn.close()
+
+def run_cleanup_scheduler():
+    """Run cleanup every hour"""
+    while True:
+        time.sleep(3600)  # Wait 1 hour
+        try:
+            cleanup_expired_data()
+        except Exception as e:
+            print(f"❌ Cleanup scheduler error: {e}")
+
+# Start cleanup thread
+cleanup_thread = threading.Thread(target=run_cleanup_scheduler, daemon=True)
+cleanup_thread.start()
+
 # Authentication decorators
 def admin_required(f):
     @wraps(f)
@@ -100,67 +185,6 @@ def admin_required(f):
             return redirect('/admin/login')
         return f(*args, **kwargs)
     return decorated_function
-
-# In-memory storage for sessions
-admin_sessions = {}
-user_rooms = {}
-user_sockets = {}  # device_id -> [socket_ids]
-
-def cleanup_inactive_users():
-    """Delete users inactive for more than 2 days and their associated files"""
-    conn = get_db()
-    c = conn.cursor()
-    
-    # Calculate cutoff time (2 days ago)
-    cutoff_time = datetime.now() - timedelta(days=2)
-    
-    # Get inactive users
-    c.execute('SELECT device_id FROM users WHERE last_active < ?', (cutoff_time.isoformat(),))
-    inactive_users = c.fetchall()
-    
-    deleted_count = 0
-    for user in inactive_users:
-        device_id = user[0]
-        
-        # Get all files for this user
-        c.execute('SELECT filepath FROM uploaded_files WHERE device_id = ?', (device_id,))
-        files = c.fetchall()
-        
-        # Delete physical files
-        for file_row in files:
-            filepath = file_row[0]
-            if os.path.exists(filepath):
-                try:
-                    os.remove(filepath)
-                    print(f"🗑️ Deleted file: {filepath}")
-                except Exception as e:
-                    print(f"❌ Error deleting file {filepath}: {e}")
-        
-        # Delete user (CASCADE will delete messages and file records)
-        c.execute('DELETE FROM users WHERE device_id = ?', (device_id,))
-        print(f"🗑️ Deleted inactive user: {device_id}")
-        deleted_count += 1
-    
-    conn.commit()
-    conn.close()
-    
-    if deleted_count > 0:
-        print(f"✅ Cleaned up {deleted_count} inactive users")
-    
-    return deleted_count
-
-def run_cleanup_scheduler():
-    """Run cleanup every hour"""
-    while True:
-        time.sleep(3600)  # Wait 1 hour
-        try:
-            cleanup_inactive_users()
-        except Exception as e:
-            print(f"❌ Cleanup error: {e}")
-
-# Start cleanup thread
-cleanup_thread = threading.Thread(target=run_cleanup_scheduler, daemon=True)
-cleanup_thread.start()
 
 # HTTP Routes
 @app.route('/')
@@ -257,6 +281,11 @@ def get_stats():
         # Active connections
         active_connections = len(user_rooms)
         
+        # Expiring soon count
+        tomorrow = (datetime.now() + timedelta(days=1)).isoformat()
+        c.execute('SELECT COUNT(*) as total FROM messages WHERE expires_at < ?', (tomorrow,))
+        expiring_soon = c.fetchone()[0]
+        
         return jsonify({
             'total_users': total_users,
             'active_users': active_users,
@@ -265,6 +294,7 @@ def get_stats():
             'today_messages': today_messages,
             'active_connections': active_connections,
             'admin_connections': len([s for s in admin_sessions if admin_sessions[s].get('authenticated')]),
+            'expiring_soon': expiring_soon,
             'server_time': datetime.now().isoformat()
         })
     finally:
@@ -275,22 +305,66 @@ def get_stats():
 def manual_cleanup():
     """Manual cleanup endpoint"""
     try:
-        count = cleanup_inactive_users()
-        return jsonify({'success': True, 'message': f'Cleanup completed. Deleted {count} users.'})
+        result = cleanup_expired_data()
+        return jsonify({'success': True, 'result': result})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-@app.route('/api/debug/connections')
-@admin_required
-def debug_connections():
-    """Debug endpoint to see active connections"""
-    return jsonify({
-        'admin_sessions': len(admin_sessions),
-        'user_rooms': len(user_rooms),
-        'user_sockets': user_sockets,
-        'admin_authenticated': len([s for s in admin_sessions if admin_sessions[s].get('authenticated')]),
-        'timestamp': datetime.now().isoformat()
-    })
+@app.route('/api/user/history')
+def get_user_history():
+    """Get user's chat history"""
+    device_id = request.args.get('device_id')
+    
+    if not device_id:
+        return jsonify({'error': 'Device ID required'}), 400
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    try:
+        # Get user info
+        c.execute('SELECT username FROM users WHERE device_id = ?', (device_id,))
+        user = c.fetchone()
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Get all messages for this user (not expired)
+        now = datetime.now().isoformat()
+        c.execute('''SELECT * FROM messages 
+                     WHERE device_id = ? 
+                     AND expires_at > ?
+                     ORDER BY timestamp ASC''', (device_id, now))
+        
+        messages = []
+        for row in c.fetchall():
+            messages.append({
+                'id': row['id'],
+                'sender': row['sender'],
+                'message': row['message'],
+                'type': row['type'],
+                'is_admin': bool(row['is_admin']),
+                'timestamp': row['timestamp'],
+                'expires_at': row['expires_at']
+            })
+        
+        # Update user activity
+        update_user_activity(device_id)
+        
+        return jsonify({
+            'success': True,
+            'username': user['username'],
+            'device_id': device_id,
+            'messages': messages,
+            'total': len(messages),
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        print(f'❌ Error getting user history: {e}')
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
 
 # ==============================================
 # SOCKET.IO EVENTS
@@ -368,7 +442,7 @@ def handle_admin_auth(data):
 
 @socketio.on('register_user')
 def handle_register_user(data):
-    """Register or update user with persistent device_id"""
+    """Register or update user and send their chat history"""
     device_id = data.get('device_id')
     username = data.get('username', 'Anonymous')
     
@@ -402,6 +476,24 @@ def handle_register_user(data):
             is_new = True
             print(f'✅ New user registered: {username} ({device_id[:8]}...)')
         
+        # Get user's chat history (not expired)
+        now_time = datetime.now().isoformat()
+        c.execute('''SELECT * FROM messages 
+                     WHERE device_id = ? 
+                     AND expires_at > ?
+                     ORDER BY timestamp ASC''', (device_id, now_time))
+        
+        history = []
+        for row in c.fetchall():
+            history.append({
+                'id': row['id'],
+                'sender': row['sender'],
+                'message': row['message'],
+                'type': row['type'],
+                'is_admin': bool(row['is_admin']),
+                'timestamp': row['timestamp']
+            })
+        
         conn.commit()
         
         # Join room for this device
@@ -422,16 +514,22 @@ def handle_register_user(data):
                     'username': username,
                     'timestamp': now,
                     'is_new': is_new,
-                    'socket_count': len(user_sockets.get(device_id, []))
+                    'socket_count': len(user_sockets.get(device_id, [])),
+                    'message_count': len(history)
                 }, room=admin_sid)
         
+        # Send registration success WITH chat history
         emit('user_registered', {
             'device_id': device_id, 
             'username': username,
             'timestamp': now,
             'is_new': is_new,
+            'history': history,
+            'message_count': len(history),
             'message': 'Registration successful'
         })
+        
+        print(f'📋 Sent {len(history)} messages from history to {username}')
         
     except Exception as e:
         print(f'❌ Error registering user: {e}')
@@ -468,11 +566,12 @@ def handle_send_message(data):
         # Update user activity
         update_user_activity(device_id)
         
-        # Save message
+        # Save message with 2-day expiration
+        expires_at = (datetime.now() + timedelta(days=2)).isoformat()
         timestamp = datetime.now().isoformat()
-        c.execute('''INSERT INTO messages (device_id, sender, message, type, is_admin, timestamp)
-                     VALUES (?, ?, ?, ?, ?, ?)''',
-                  (device_id, username, message, msg_type, False, timestamp))
+        c.execute('''INSERT INTO messages (device_id, sender, message, type, is_admin, timestamp, expires_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                  (device_id, username, message, msg_type, False, timestamp, expires_at))
         conn.commit()
         
         message_data = {
@@ -482,6 +581,7 @@ def handle_send_message(data):
             'type': msg_type,
             'is_admin': False,
             'timestamp': timestamp,
+            'expires_at': expires_at,
             'id': c.lastrowid
         }
         
@@ -496,7 +596,7 @@ def handle_send_message(data):
         else:
             print('⚠️ No authenticated admins to notify')
         
-        print(f'✅ Message saved and delivered')
+        print(f'✅ Message saved (expires: {expires_at})')
         
     except Exception as e:
         print(f'❌ Error sending message: {e}')
@@ -525,10 +625,12 @@ def handle_admin_message(data):
     c = conn.cursor()
     
     try:
+        # Save message with 2-day expiration
+        expires_at = (datetime.now() + timedelta(days=2)).isoformat()
         timestamp = datetime.now().isoformat()
-        c.execute('''INSERT INTO messages (device_id, sender, message, type, is_admin, timestamp)
-                     VALUES (?, ?, ?, ?, ?, ?)''',
-                  (device_id, 'Flexia Merchant', message, msg_type, True, timestamp))
+        c.execute('''INSERT INTO messages (device_id, sender, message, type, is_admin, timestamp, expires_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                  (device_id, 'Flexia Merchant', message, msg_type, True, timestamp, expires_at))
         conn.commit()
         
         message_data = {
@@ -538,6 +640,7 @@ def handle_admin_message(data):
             'type': msg_type,
             'is_admin': True,
             'timestamp': timestamp,
+            'expires_at': expires_at,
             'id': c.lastrowid
         }
         
@@ -547,7 +650,7 @@ def handle_admin_message(data):
         # Also send to admin room
         emit('receive_message', message_data, room='admin_room')
         
-        print(f'📤 Admin message to {device_id[:8]}...: {message[:50]}...')
+        print(f'📤 Admin message to {device_id[:8]}... (expires: {expires_at})')
         
     except Exception as e:
         print(f'❌ Error sending admin message: {e}')
@@ -593,24 +696,25 @@ def handle_upload_image(data):
         with open(filepath, 'wb') as f:
             f.write(base64.b64decode(image_data))
         
-        # Save to database
+        # Save to database with 2-day expiration
+        expires_at = (datetime.now() + timedelta(days=2)).isoformat()
         conn = get_db()
         c = conn.cursor()
         
         # Record file upload
-        c.execute('''INSERT INTO uploaded_files (device_id, filename, filepath)
-                     VALUES (?, ?, ?)''', (device_id, filename, filepath))
+        c.execute('''INSERT INTO uploaded_files (device_id, filename, filepath, expires_at)
+                     VALUES (?, ?, ?, ?)''', 
+                  (device_id, filename, filepath, expires_at))
         
         # Save as message
         image_url = f'/uploads/{unique_filename}'
         sender = 'Flexia Merchant' if is_admin else username
         timestamp = datetime.now().isoformat()
         
-        c.execute('''INSERT INTO messages (device_id, sender, message, type, is_admin, timestamp)
-                     VALUES (?, ?, ?, ?, ?, ?)''',
-                  (device_id, sender, image_url, 'image', is_admin, timestamp))
+        c.execute('''INSERT INTO messages (device_id, sender, message, type, is_admin, timestamp, expires_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                  (device_id, sender, image_url, 'image', is_admin, timestamp, expires_at))
         conn.commit()
-        conn.close()
         
         message_data = {
             'device_id': device_id,
@@ -618,7 +722,9 @@ def handle_upload_image(data):
             'message': image_url,
             'type': 'image',
             'is_admin': is_admin,
-            'timestamp': timestamp
+            'timestamp': timestamp,
+            'expires_at': expires_at,
+            'id': c.lastrowid
         }
         
         if is_admin:
@@ -631,11 +737,13 @@ def handle_upload_image(data):
             # Notify admins
             emit('new_user_message', message_data, room='admin_room')
         
-        print(f'📷 Image uploaded: {unique_filename}')
+        print(f'📷 Image uploaded (expires: {expires_at})')
         
     except Exception as e:
         print(f'❌ Error uploading image: {e}')
         emit('error', {'message': 'Image upload failed'})
+    finally:
+        conn.close()
 
 @socketio.on('get_all_users')
 def handle_get_all_users(data=None):
@@ -658,9 +766,9 @@ def handle_get_all_users(data=None):
                         COUNT(m.id) as message_count,
                         MAX(m.timestamp) as last_message
                      FROM users u
-                     LEFT JOIN messages m ON u.device_id = m.device_id
+                     LEFT JOIN messages m ON u.device_id = m.device_id AND m.expires_at > ?
                      GROUP BY u.device_id
-                     ORDER BY u.last_active DESC''')
+                     ORDER BY u.last_active DESC''', (datetime.now().isoformat(),))
         
         users = []
         for row in c.fetchall():
@@ -717,9 +825,12 @@ def handle_get_user_messages(data):
     c = conn.cursor()
     
     try:
+        # Get only non-expired messages
+        now = datetime.now().isoformat()
         c.execute('''SELECT * FROM messages 
                      WHERE device_id = ? 
-                     ORDER BY timestamp ASC''', (device_id,))
+                     AND expires_at > ?
+                     ORDER BY timestamp ASC''', (device_id, now))
         
         messages = []
         for row in c.fetchall():
@@ -730,7 +841,8 @@ def handle_get_user_messages(data):
                 'message': row['message'],
                 'type': row['type'],
                 'is_admin': bool(row['is_admin']),
-                'timestamp': row['timestamp']
+                'timestamp': row['timestamp'],
+                'expires_at': row['expires_at']
             })
         
         # Get user info
@@ -742,7 +854,8 @@ def handle_get_user_messages(data):
             'device_id': device_id,
             'username': username,
             'messages': messages,
-            'total': len(messages)
+            'total': len(messages),
+            'expired_count': get_expired_count(device_id)
         })
         print(f'💬 Sent {len(messages)} messages for {device_id}')
         
@@ -751,6 +864,16 @@ def handle_get_user_messages(data):
         emit('error', {'message': 'Failed to get messages'})
     finally:
         conn.close()
+
+def get_expired_count(device_id):
+    """Get count of expired messages for a user"""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM messages WHERE device_id = ? AND expires_at < ?',
+              (device_id, datetime.now().isoformat()))
+    count = c.fetchone()[0]
+    conn.close()
+    return count
 
 @socketio.on('delete_user')
 def handle_delete_user(data):
@@ -829,4 +952,5 @@ if __name__ == '__main__':
     print(f'🚀 Server starting on port {port}')
     print(f'🔑 Admin password: {app.config["ADMIN_PASSWORD"]}')
     print(f'📁 Upload folder: {app.config["UPLOAD_FOLDER"]}')
+    print(f'🗑️ Auto-cleanup: Every 1 hour (deletes data older than 2 days)')
     socketio.run(app, host='0.0.0.0', port=port, debug=True, allow_unsafe_werkzeug=True)
