@@ -331,6 +331,20 @@
             font-size: 10px;
         }
 
+        /* Expiration Indicator */
+        .expiration-badge {
+            font-size: 9px;
+            padding: 2px 6px;
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.1);
+            margin-left: 5px;
+            opacity: 0.7;
+        }
+
+        .message.user .expiration-badge {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
         /* Typing Indicator */
         .typing-indicator {
             align-self: flex-start;
@@ -905,9 +919,9 @@
                     <i class="fas fa-user-edit"></i>
                     <span>Change Name</span>
                 </a>
-                <a class="menu-item" onclick="clearChat()">
+                <a class="menu-item" onclick="clearLocalChat()">
                     <i class="fas fa-trash"></i>
-                    <span>Clear Chat</span>
+                    <span>Clear Local Chat</span>
                 </a>
                 <a class="menu-item" onclick="toggleSound()">
                     <i class="fas fa-volume-up" id="soundIcon"></i>
@@ -941,7 +955,7 @@
                     </div>
                     <div class="title-text">
                         <h1>Flexia Support</h1>
-                        <p>24/7 Customer Service • Instant Replies</p>
+                        <p>24/7 Customer Service • Chat persists for 2 days</p>
                     </div>
                 </div>
                 
@@ -955,6 +969,7 @@
                     <span id="userNameDisplay">Guest User</span>
                     <span>•</span>
                     <span id="deviceIdDisplay">ID: Loading...</span>
+                    <span class="expiration-badge" id="expirationInfo" title="Chat history auto-deletes after 2 days">2-day retention</span>
                 </div>
             </div>
         </div>
@@ -965,18 +980,18 @@
             <div class="welcome-message">
                 <div class="welcome-header">
                     <div class="welcome-icon">
-                        <i class="fas fa-headset"></i>
+                        <i class="fas fa-history"></i>
                     </div>
                     <div class="welcome-text">
-                        <h3>Welcome to Flexia Merchant Support! 👋</h3>
-                        <p>We're here to help you 24/7. Ask us anything!</p>
+                        <h3>Welcome back! Loading your chat history... 📜</h3>
+                        <p>Your messages are saved for 48 hours</p>
                     </div>
                 </div>
                 
                 <div class="features-grid">
                     <div class="feature-item">
-                        <i class="fas fa-bolt"></i>
-                        <span>Instant Responses</span>
+                        <i class="fas fa-history"></i>
+                        <span>48-hour History</span>
                     </div>
                     <div class="feature-item">
                         <i class="fas fa-shield-alt"></i>
@@ -988,7 +1003,7 @@
                     </div>
                     <div class="feature-item">
                         <i class="fas fa-clock"></i>
-                        <span>24/7 Available</span>
+                        <span>24/7 Support</span>
                     </div>
                 </div>
             </div>
@@ -1036,8 +1051,8 @@
             
             <div class="input-hints">
                 <div class="hint-item">
-                    <i class="fas fa-shift"></i>
-                    <span>Shift + Enter for new line</span>
+                    <i class="fas fa-history"></i>
+                    <span>Chat saved for 2 days</span>
                 </div>
                 <div class="hint-item">
                     <i class="fas fa-image"></i>
@@ -1059,11 +1074,15 @@
         let isAtBottom = true;
         let reconnectAttempts = 0;
         const maxReconnectAttempts = 5;
+        let hasLoadedHistory = false;
 
         // Initialize chat
         function initChat() {
             // Load user data
             loadUserData();
+            
+            // Load chat history BEFORE connecting to socket
+            loadChatHistory();
             
             // Connect to server
             connectSocket();
@@ -1108,6 +1127,67 @@
             document.getElementById('userNameDisplay').textContent = username;
             document.getElementById('deviceIdDisplay').textContent = `ID: ${deviceId.substring(0, 8)}...`;
             updateSoundUI();
+        }
+
+        // Load chat history from server
+        function loadChatHistory() {
+            if (!deviceId) return;
+            
+            console.log('📚 Loading chat history from server...');
+            
+            fetch(`/api/user/history?device_id=${encodeURIComponent(deviceId)}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('No history found');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.success && data.messages && data.messages.length > 0) {
+                        console.log(`📜 Found ${data.messages.length} messages in history`);
+                        hasLoadedHistory = true;
+                        
+                        // Clear existing messages except welcome
+                        const container = document.getElementById('chatMessages');
+                        const welcomeMsg = container.querySelector('.welcome-message');
+                        container.innerHTML = '';
+                        if (welcomeMsg) {
+                            container.appendChild(welcomeMsg);
+                        }
+                        
+                        // Update welcome message
+                        const welcomeText = welcomeMsg.querySelector('.welcome-text h3');
+                        if (welcomeText) {
+                            welcomeText.textContent = `Welcome back, ${username}!`;
+                        }
+                        
+                        const welcomeSub = welcomeMsg.querySelector('.welcome-text p');
+                        if (welcomeSub) {
+                            welcomeSub.textContent = `Loaded ${data.messages.length} previous messages`;
+                        }
+                        
+                        // Load all messages
+                        data.messages.forEach(msg => {
+                            addMessageToChat(msg, false); // Don't play sound for history
+                        });
+                        
+                        showToast(`Loaded ${data.messages.length} previous messages`, 'success');
+                        setTimeout(() => scrollToBottom(), 300);
+                    } else {
+                        console.log('No previous chat history found');
+                        const welcomeText = document.querySelector('.welcome-text h3');
+                        if (welcomeText) {
+                            welcomeText.textContent = 'Welcome to Flexia Support! 👋';
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.log('No previous chat history:', error.message);
+                    const welcomeText = document.querySelector('.welcome-text h3');
+                    if (welcomeText) {
+                        welcomeText.textContent = 'Welcome to Flexia Support! 👋';
+                    }
+                });
         }
 
         // Connect to Socket.IO server
@@ -1173,6 +1253,38 @@
                 console.log('✅ User registered:', data);
                 showToast('Successfully connected to support!', 'success');
                 
+                // If we haven't loaded history via HTTP, load from socket
+                if (!hasLoadedHistory && data.history && data.history.length > 0) {
+                    console.log(`📜 Loading ${data.history.length} messages from socket history`);
+                    
+                    // Clear existing messages except welcome
+                    const container = document.getElementById('chatMessages');
+                    const welcomeMsg = container.querySelector('.welcome-message');
+                    container.innerHTML = '';
+                    if (welcomeMsg) {
+                        container.appendChild(welcomeMsg);
+                    }
+                    
+                    // Update welcome message
+                    const welcomeText = welcomeMsg.querySelector('.welcome-text h3');
+                    if (welcomeText) {
+                        welcomeText.textContent = `Welcome back, ${username}!`;
+                    }
+                    
+                    const welcomeSub = welcomeMsg.querySelector('.welcome-text p');
+                    if (welcomeSub) {
+                        welcomeSub.textContent = `Loaded ${data.history.length} previous messages`;
+                    }
+                    
+                    // Load all messages
+                    data.history.forEach(msg => {
+                        addMessageToChat(msg, false);
+                    });
+                    
+                    hasLoadedHistory = true;
+                    setTimeout(() => scrollToBottom(), 300);
+                }
+                
                 // Start heartbeat after successful registration
                 startHeartbeat();
             });
@@ -1204,23 +1316,6 @@
                 if (!isAtBottom) {
                     showNewMessageIndicator();
                 }
-            });
-
-            socket.on('new_user_message', (data) => {
-                console.log('📨 New user message event:', data);
-            });
-
-            socket.on('user_connected', (data) => {
-                console.log('👤 User connected event:', data);
-            });
-
-            socket.on('user_disconnected', (data) => {
-                console.log('👋 User disconnected event:', data);
-            });
-
-            socket.on('error', (data) => {
-                console.error('Server error:', data.message);
-                showToast('Error: ' + data.message, 'error');
             });
 
             socket.on('heartbeat_ack', (data) => {
@@ -1286,14 +1381,6 @@
                 message: message
             });
             
-            // Add to chat immediately (echo)
-            addMessageToChat({
-                sender: username,
-                message: message,
-                is_admin: false,
-                timestamp: new Date().toISOString()
-            });
-            
             // Clear input
             input.value = '';
             autoResize(input);
@@ -1332,15 +1419,6 @@
             
             const reader = new FileReader();
             reader.onload = function(e) {
-                // Show image in chat immediately
-                addMessageToChat({
-                    sender: username,
-                    message: e.target.result,
-                    type: 'image',
-                    is_admin: false,
-                    timestamp: new Date().toISOString()
-                });
-                
                 // Send to server
                 socket.emit('upload_image', {
                     device_id: deviceId,
@@ -1348,9 +1426,6 @@
                     image: e.target.result,
                     filename: file.name
                 });
-                
-                // Scroll to bottom
-                scrollToBottom();
                 
                 // Play sound
                 if (isSoundEnabled) {
@@ -1369,7 +1444,7 @@
         }
 
         // Add message to chat
-        function addMessageToChat(data) {
+        function addMessageToChat(data, playSound = true) {
             const container = document.getElementById('chatMessages');
             
             // Remove welcome message if it's the first user message
@@ -1387,6 +1462,16 @@
             // Add date separator if needed
             addDateSeparator(container, msgDate);
             
+            // Calculate expiration info
+            let expirationHtml = '';
+            if (data.expires_at) {
+                const expiresDate = new Date(data.expires_at);
+                const hoursLeft = Math.ceil((expiresDate - new Date()) / (1000 * 60 * 60));
+                if (hoursLeft > 0) {
+                    expirationHtml = `<span class="expiration-badge" title="Expires in ${hoursLeft} hours">${hoursLeft}h</span>`;
+                }
+            }
+            
             let messageHtml;
             if (data.type === 'image') {
                 messageHtml = `
@@ -1402,6 +1487,7 @@
                             <div class="message-time">
                                 <i class="far fa-clock time-icon"></i>
                                 ${time}
+                                ${expirationHtml}
                             </div>
                         </div>
                     </div>
@@ -1418,6 +1504,7 @@
                             <div class="message-time">
                                 <i class="far fa-clock time-icon"></i>
                                 ${time}
+                                ${expirationHtml}
                             </div>
                         </div>
                     </div>
@@ -1429,6 +1516,11 @@
             // Auto-scroll if at bottom
             if (isAtBottom) {
                 setTimeout(() => scrollToBottom(), 100);
+            }
+            
+            // Play sound for new messages
+            if (playSound && isSoundEnabled && data.sender !== username) {
+                playSound('message');
             }
         }
 
@@ -1585,8 +1677,8 @@
             toggleMenu();
         }
 
-        function clearChat() {
-            if (confirm('Are you sure you want to clear all messages? This will only clear your local view.')) {
+        function clearLocalChat() {
+            if (confirm('Are you sure you want to clear your local chat view? This will not delete messages from the server.')) {
                 const container = document.getElementById('chatMessages');
                 const welcomeMsg = container.querySelector('.welcome-message');
                 
@@ -1594,9 +1686,10 @@
                 container.innerHTML = '';
                 if (welcomeMsg) {
                     container.appendChild(welcomeMsg);
+                    welcomeMsg.style.opacity = '1';
                 }
                 
-                showToast('Chat cleared', 'info');
+                showToast('Local chat cleared. Server messages will reload on refresh.', 'info');
             }
             toggleMenu();
         }
@@ -1669,7 +1762,7 @@
         }
 
         function showHelp() {
-            alert(`Need help? Here are some tips:\n\n1. Type your message and press Enter to send\n2. Click the image icon to upload photos\n3. Use Shift+Enter for new lines\n4. Your chat is automatically saved\n5. Support is available 24/7\n\nYour Device ID: ${deviceId}\nYour Username: ${username}`);
+            alert(`Need help? Here are some tips:\n\n1. Type your message and press Enter to send\n2. Click the image icon to upload photos\n3. Your chat history is saved for 48 hours\n4. Messages auto-delete after 2 days\n5. Support is available 24/7\n\nYour Device ID: ${deviceId}\nYour Username: ${username}`);
             toggleMenu();
         }
 
@@ -1794,8 +1887,13 @@
                 socketConnected: socket?.connected,
                 socketId: socket?.id,
                 isSoundEnabled,
-                unreadMessages
+                unreadMessages,
+                hasLoadedHistory
             }),
+            reloadHistory: () => {
+                loadChatHistory();
+                showToast('Reloading chat history...', 'info');
+            },
             testConnection: () => {
                 if (socket && socket.connected) {
                     showToast('Socket connected: ' + socket.id, 'success');
