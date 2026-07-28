@@ -1,2038 +1,936 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Flexia Merchant • Admin Dashboard</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>
-        :root {
-            --primary: #4361ee;
-            --primary-light: #4895ef;
-            --secondary: #3a0ca3;
-            --accent: #f72585;
-            --success: #4cc9f0;
-            --warning: #f8961e;
-            --danger: #ef233c;
-            --dark: #212529;
-            --light: #f8f9fa;
-            --gray: #6c757d;
-            --gray-light: #e9ecef;
-            --border-radius: 12px;
-            --box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
-            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        }
-
-        body {
-            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-            min-height: 100vh;
-            color: var(--dark);
-        }
-
-        .container {
-            display: grid;
-            grid-template-columns: 280px 1fr;
-            min-height: 100vh;
-            max-width: 1920px;
-            margin: 0 auto;
-        }
-
-        /* ============ SIDEBAR ============ */
-        .sidebar {
-            background: linear-gradient(180deg, var(--dark) 0%, #1a1d29 100%);
-            color: white;
-            padding: 30px 0;
-            display: flex;
-            flex-direction: column;
-            box-shadow: 5px 0 30px rgba(0, 0, 0, 0.1);
-            z-index: 100;
-        }
-
-        .logo {
-            padding: 0 25px 30px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            margin-bottom: 30px;
-            display: flex;
-            align-items: center;
-            gap: 15px;
-        }
-
-        .logo-icon {
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-        }
-
-        .logo-text h1 {
-            font-size: 20px;
-            font-weight: 700;
-            background: linear-gradient(to right, #fff, var(--primary-light));
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
-        }
-
-        .logo-text span {
-            font-size: 12px;
-            opacity: 0.7;
-            font-weight: 400;
-        }
-
-        .nav-links {
-            flex: 1;
-            padding: 0 15px;
-        }
-
-        .nav-item {
-            padding: 14px 20px;
-            margin: 8px 0;
-            border-radius: var(--border-radius);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            transition: var(--transition);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .nav-item::before {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 0;
-            height: 100%;
-            width: 4px;
-            background: var(--primary);
-            transform: scaleY(0);
-            transition: var(--transition);
-        }
-
-        .nav-item:hover {
-            background: rgba(255, 255, 255, 0.05);
-            padding-left: 25px;
-        }
-
-        .nav-item.active {
-            background: rgba(67, 97, 238, 0.15);
-            color: var(--primary-light);
-        }
-
-        .nav-item.active::before {
-            transform: scaleY(1);
-        }
-
-        .nav-icon {
-            font-size: 18px;
-            width: 24px;
-            text-align: center;
-        }
-
-        .nav-text {
-            font-weight: 500;
-            font-size: 15px;
-        }
-
-        .nav-badge {
-            margin-left: auto;
-            background: var(--accent);
-            color: white;
-            font-size: 11px;
-            padding: 3px 8px;
-            border-radius: 20px;
-            font-weight: 600;
-        }
-
-        .sidebar-footer {
-            padding: 25px;
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .user-info {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 20px;
-        }
-
-        .user-avatar {
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 600;
-        }
-
-        .user-details h4 {
-            font-size: 14px;
-            margin-bottom: 3px;
-        }
-
-        .user-details span {
-            font-size: 12px;
-            opacity: 0.7;
-        }
-
-        .logout-btn {
-            width: 100%;
-            padding: 12px;
-            background: rgba(239, 35, 60, 0.1);
-            color: var(--danger);
-            border: 1px solid rgba(239, 35, 60, 0.2);
-            border-radius: var(--border-radius);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            font-weight: 500;
-            transition: var(--transition);
-        }
-
-        .logout-btn:hover {
-            background: rgba(239, 35, 60, 0.2);
-            transform: translateY(-2px);
-        }
-
-        /* ============ MAIN CONTENT ============ */
-        .main-content {
-            padding: 30px;
-            overflow-y: auto;
-        }
-
-        /* Header */
-        .header {
-            background: white;
-            padding: 25px 30px;
-            border-radius: var(--border-radius);
-            box-shadow: var(--box-shadow);
-            margin-bottom: 30px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            animation: slideDown 0.5s ease;
-        }
-
-        .header-title h2 {
-            font-size: 28px;
-            font-weight: 700;
-            background: linear-gradient(to right, var(--dark), var(--primary));
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
-            margin-bottom: 5px;
-        }
-
-        .header-title p {
-            color: var(--gray);
-            font-size: 14px;
-        }
-
-        .header-actions {
-            display: flex;
-            gap: 15px;
-            align-items: center;
-        }
-
-        .header-btn {
-            padding: 10px 20px;
-            border-radius: var(--border-radius);
-            border: none;
-            font-weight: 600;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            transition: var(--transition);
-        }
-
-        .btn-primary {
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
-            color: white;
-        }
-
-        .btn-secondary {
-            background: var(--gray-light);
-            color: var(--dark);
-        }
-
-        .btn-primary:hover, .btn-secondary:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 10px 20px rgba(67, 97, 238, 0.2);
-        }
-
-        .time-display {
-            background: var(--light);
-            padding: 10px 20px;
-            border-radius: var(--border-radius);
-            font-weight: 600;
-            font-size: 14px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        /* Stats Cards */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-            gap: 25px;
-            margin-bottom: 40px;
-        }
-
-        .stat-card {
-            background: white;
-            padding: 25px;
-            border-radius: var(--border-radius);
-            box-shadow: var(--box-shadow);
-            transition: var(--transition);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-10px);
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-        }
-
-        .stat-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 4px;
-            background: linear-gradient(to right, var(--primary), var(--accent));
-        }
-
-        .stat-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-        }
-
-        .stat-icon {
-            width: 50px;
-            height: 50px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 22px;
-            color: white;
-        }
-
-        .stat-icon.users { background: linear-gradient(135deg, #4361ee, #3a0ca3); }
-        .stat-icon.messages { background: linear-gradient(135deg, #4cc9f0, #4895ef); }
-        .stat-icon.active { background: linear-gradient(135deg, #f8961e, #f3722c); }
-        .stat-icon.files { background: linear-gradient(135deg, #f72585, #b5179e); }
-
-        .stat-trend {
-            font-size: 14px;
-            font-weight: 600;
-            padding: 4px 12px;
-            border-radius: 20px;
-            background: rgba(76, 201, 240, 0.1);
-            color: var(--success);
-        }
-
-        .stat-value {
-            font-size: 36px;
-            font-weight: 800;
-            margin-bottom: 5px;
-            background: linear-gradient(to right, var(--dark), var(--primary));
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
-        }
-
-        .stat-label {
-            color: var(--gray);
-            font-size: 14px;
-            font-weight: 500;
-        }
-
-        /* Users Table */
-        .table-container {
-            background: white;
-            border-radius: var(--border-radius);
-            box-shadow: var(--box-shadow);
-            overflow: hidden;
-            animation: fadeIn 0.8s ease;
-        }
-
-        .table-header {
-            padding: 25px;
-            border-bottom: 1px solid var(--gray-light);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .table-header h3 {
-            font-size: 20px;
-            font-weight: 700;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .search-box {
-            position: relative;
-            width: 300px;
-        }
-
-        .search-box input {
-            width: 100%;
-            padding: 12px 20px 12px 45px;
-            border: 2px solid var(--gray-light);
-            border-radius: var(--border-radius);
-            font-size: 14px;
-            transition: var(--transition);
-        }
-
-        .search-box input:focus {
-            outline: none;
-            border-color: var(--primary);
-            box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.1);
-        }
-
-        .search-box i {
-            position: absolute;
-            left: 15px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: var(--gray);
-        }
-
-        .table-wrapper {
-            overflow-x: auto;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            min-width: 800px;
-        }
-
-        thead {
-            background: linear-gradient(to right, var(--light), #e9ecef);
-        }
-
-        th {
-            padding: 18px 20px;
-            text-align: left;
-            font-weight: 600;
-            color: var(--dark);
-            font-size: 14px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            border-bottom: 2px solid var(--gray-light);
-        }
-
-        td {
-            padding: 20px;
-            border-bottom: 1px solid var(--gray-light);
-            font-size: 14px;
-        }
-
-        tbody tr {
-            transition: var(--transition);
-        }
-
-        tbody tr:hover {
-            background: rgba(67, 97, 238, 0.03);
-            transform: scale(1.01);
-        }
-
-        .user-cell {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .user-avatar-small {
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: 600;
-            font-size: 14px;
-        }
-
-        .user-info-small h4 {
-            font-weight: 600;
-            margin-bottom: 3px;
-        }
-
-        .user-info-small span {
-            font-size: 12px;
-            color: var(--gray);
-            font-family: 'Courier New', monospace;
-        }
-
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
-        }
-
-        .status-active {
-            background: rgba(76, 201, 240, 0.1);
-            color: var(--success);
-        }
-
-        .status-inactive {
-            background: rgba(239, 35, 60, 0.1);
-            color: var(--danger);
-        }
-
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-        }
-
-        .status-active .status-dot {
-            background: var(--success);
-            animation: pulse 2s infinite;
-        }
-
-        .status-inactive .status-dot {
-            background: var(--danger);
-        }
-
-        .action-buttons {
-            display: flex;
-            gap: 8px;
-        }
-
-        .btn-action {
-            width: 36px;
-            height: 36px;
-            border-radius: 8px;
-            border: none;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: var(--transition);
-            font-size: 14px;
-        }
-
-        .btn-chat {
-            background: rgba(67, 97, 238, 0.1);
-            color: var(--primary);
-        }
-
-        .btn-delete {
-            background: rgba(239, 35, 60, 0.1);
-            color: var(--danger);
-        }
-
-        .btn-chat:hover {
-            background: var(--primary);
-            color: white;
-            transform: rotate(5deg);
-        }
-
-        .btn-delete:hover {
-            background: var(--danger);
-            color: white;
-            transform: rotate(-5deg);
-        }
-
-        /* Chat Panel */
-        .chat-container {
-            background: white;
-            border-radius: var(--border-radius);
-            box-shadow: var(--box-shadow);
-            height: 75vh;
-            display: flex;
-            flex-direction: column;
-            animation: slideUp 0.5s ease;
-            display: none;
-        }
-
-        .chat-header {
-            padding: 25px;
-            border-bottom: 1px solid var(--gray-light);
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            background: linear-gradient(to right, var(--light), white);
-        }
-
-        .back-button {
-            background: none;
-            border: none;
-            font-size: 20px;
-            color: var(--primary);
-            cursor: pointer;
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: var(--transition);
-        }
-
-        .back-button:hover {
-            background: var(--gray-light);
-            transform: translateX(-5px);
-        }
-
-        .chat-user-info {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-        }
-
-        .chat-user-avatar {
-            width: 50px;
-            height: 50px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 20px;
-            font-weight: 600;
-        }
-
-        .chat-user-details h3 {
-            font-size: 18px;
-            font-weight: 700;
-            margin-bottom: 5px;
-        }
-
-        .chat-user-details .status {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 13px;
-            color: var(--gray);
-        }
-
-        .chat-messages {
-            flex: 1;
-            padding: 25px;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-            background: linear-gradient(180deg, #f8f9fa 0%, white 100%);
-        }
-
-        .message {
-            max-width: 70%;
-            padding: 0;
-            position: relative;
-            animation: messageAppear 0.3s ease;
-        }
-
-        .message.user {
-            align-self: flex-start;
-        }
-
-        .message.admin {
-            align-self: flex-end;
-        }
-
-        .message-bubble {
-            padding: 15px 20px;
-            border-radius: 20px;
-            position: relative;
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
-        }
-
-        .message.user .message-bubble {
-            background: white;
-            border: 1px solid var(--gray-light);
-            border-bottom-left-radius: 5px;
-        }
-
-        .message.admin .message-bubble {
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
-            color: white;
-            border-bottom-right-radius: 5px;
-        }
-
-        .message-sender {
-            font-weight: 600;
-            margin-bottom: 8px;
-            font-size: 13px;
-        }
-
-        .message.user .message-sender {
-            color: var(--primary);
-        }
-
-        .message.admin .message-sender {
-            color: rgba(255, 255, 255, 0.9);
-        }
-
-        .message-text {
-            line-height: 1.5;
-            font-size: 14px;
-        }
-
-        .message-image {
-            margin-top: 10px;
-            border-radius: 12px;
-            overflow: hidden;
-            max-width: 300px;
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
-        }
-
-        .message-image img {
-            width: 100%;
-            height: auto;
-            display: block;
-        }
-
-        .message-time {
-            font-size: 11px;
-            opacity: 0.7;
-            margin-top: 8px;
-            text-align: right;
-        }
-
-        .expiration-info {
-            font-size: 10px;
-            color: var(--warning);
-            margin-top: 3px;
-        }
-
-        .chat-input-container {
-            padding: 25px;
-            border-top: 1px solid var(--gray-light);
-            background: white;
-            display: flex;
-            gap: 15px;
-            align-items: center;
-        }
-
-        .chat-input-wrapper {
-            flex: 1;
-            position: relative;
-        }
-
-        .chat-input {
-            width: 100%;
-            padding: 16px 20px;
-            border: 2px solid var(--gray-light);
-            border-radius: var(--border-radius);
-            font-size: 15px;
-            transition: var(--transition);
-            resize: none;
-            height: 50px;
-        }
-
-        .chat-input:focus {
-            outline: none;
-            border-color: var(--primary);
-            box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.1);
-        }
-
-        .input-actions {
-            display: flex;
-            gap: 10px;
-        }
-
-        .input-btn {
-            width: 50px;
-            height: 50px;
-            border-radius: 12px;
-            border: none;
-            background: var(--gray-light);
-            color: var(--dark);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
-            transition: var(--transition);
-        }
-
-        .input-btn:hover {
-            background: var(--primary);
-            color: white;
-            transform: translateY(-3px);
-        }
-
-        .send-btn {
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
-            color: white;
-        }
-
-        .send-btn:hover {
-            transform: translateY(-3px) scale(1.05);
-        }
-
-        /* Loading States */
-        .loading {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 60px;
-            color: var(--gray);
-        }
-
-        .loading-spinner {
-            width: 50px;
-            height: 50px;
-            border: 3px solid var(--gray-light);
-            border-top-color: var(--primary);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-bottom: 20px;
-        }
-
-        /* Animations */
-        @keyframes slideDown {
-            from { opacity: 0; transform: translateY(-20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        @keyframes slideUp {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-
-        @keyframes messageAppear {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        /* Responsive */
-        @media (max-width: 1200px) {
-            .container {
-                grid-template-columns: 250px 1fr;
-            }
-            
-            .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-        }
-
-        @media (max-width: 992px) {
-            .container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .mobile-menu-btn {
-                display: block;
-            }
-        }
-
-        @media (max-width: 768px) {
-            .main-content {
-                padding: 20px;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .header {
-                flex-direction: column;
-                gap: 20px;
-                text-align: center;
-            }
-            
-            .search-box {
-                width: 100%;
-            }
-            
-            .table-header {
-                flex-direction: column;
-                gap: 20px;
-            }
-            
-            .chat-container {
-                height: 85vh;
-            }
-        }
-
-        /* Mobile Menu */
-        .mobile-menu-btn {
-            display: none;
-            position: fixed;
-            bottom: 30px;
-            right: 30px;
-            width: 60px;
-            height: 60px;
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
-            color: white;
-            border: none;
-            border-radius: 50%;
-            font-size: 24px;
-            cursor: pointer;
-            z-index: 1000;
-            box-shadow: 0 10px 30px rgba(67, 97, 238, 0.3);
-            transition: var(--transition);
-        }
-
-        @media (max-width: 992px) {
-            .mobile-menu-btn {
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
-            
-            .sidebar.mobile-open {
-                display: flex;
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 280px;
-                height: 100vh;
-                z-index: 1001;
-                animation: slideIn 0.3s ease;
-            }
-            
-            .sidebar-overlay {
-                display: none;
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                background: rgba(0, 0, 0, 0.5);
-                z-index: 1000;
-            }
-            
-            .sidebar-overlay.active {
-                display: block;
-            }
-        }
-
-        @keyframes slideIn {
-            from { transform: translateX(-100%); }
-            to { transform: translateX(0); }
-        }
-
-        /* Toast Notifications */
-        .toast {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            padding: 15px 25px;
-            border-radius: 12px;
-            box-shadow: var(--box-shadow);
-            z-index: 10000;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            animation: slideDown 0.3s ease;
-            max-width: 300px;
-        }
-
-        .toast-success {
-            background: var(--success);
-            color: white;
-        }
-
-        .toast-error {
-            background: var(--danger);
-            color: white;
-        }
-
-        .toast-warning {
-            background: var(--warning);
-            color: white;
-        }
-
-        .toast-info {
-            background: var(--primary);
-            color: white;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flexia Admin Panel</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+    --primary: #4361ee;
+    --primary-light: #4895ef;
+    --primary-dark: #3a0ca3;
+    --secondary: #7209b7;
+    --accent: #f72585;
+    --success: #4cc9f0;
+    --warning: #f8961e;
+    --danger: #ef233c;
+    --light: #f8f9fa;
+    --dark: #212529;
+    --gray: #6c757d;
+    --gray-light: #e9ecef;
+    --glass-bg: rgba(255, 255, 255, 0.7);
+    --glass-border: rgba(255, 255, 255, 0.18);
+    --shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.05);
+    --radius: 16px;
+    --radius-sm: 10px;
+    --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    color: var(--dark);
+    -webkit-font-smoothing: antialiased;
+    padding: 16px;
+}
+
+.admin-container {
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+/* Header */
+.admin-header {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius);
+    padding: 24px;
+    margin-bottom: 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: var(--shadow);
+}
+
+.admin-header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--primary), var(--secondary));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.header-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.status-badge {
+    padding: 8px 16px;
+    background: var(--success);
+    color: white;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.status-badge.offline {
+    background: var(--danger);
+}
+
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+    color: white;
+    box-shadow: var(--shadow-sm);
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow);
+}
+
+.btn-secondary {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    color: var(--primary);
+}
+
+.btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.9);
+}
+
+.btn-danger {
+    background: var(--danger);
+    color: white;
+}
+
+.btn-danger:hover {
+    background: #d41b35;
+}
+
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+/* Main Layout */
+.admin-layout {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 24px;
+}
+
+/* Users List */
+.users-panel {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    max-height: 600px;
+}
+
+.panel-header {
+    padding: 16px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.panel-header h2 {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.panel-header .badge {
+    background: var(--primary);
+    color: white;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+}
+
+.users-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+.user-item {
+    padding: 12px;
+    margin-bottom: 8px;
+    background: rgba(255, 255, 255, 0.5);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.user-item:hover {
+    background: rgba(255, 255, 255, 0.8);
+    border-color: var(--primary);
+}
+
+.user-item.active {
+    background: linear-gradient(135deg, rgba(67, 97, 238, 0.1), rgba(58, 12, 163, 0.1));
+    border-color: var(--primary);
+}
+
+.user-name {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.user-status {
+    font-size: 11px;
+    color: var(--gray);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.user-status .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--danger);
+}
+
+.user-status .dot.online {
+    background: var(--success);
+}
+
+.user-meta {
+    font-size: 10px;
+    color: var(--gray);
+    margin-top: 6px;
+    display: flex;
+    justify-content: space-between;
+}
+
+/* Chat Panel */
+.chat-panel {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    max-height: 600px;
+    overflow: hidden;
+}
+
+.chat-header {
+    padding: 16px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.chat-header h3 {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.no-user-selected {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--gray);
+}
+
+.no-user-selected i {
+    font-size: 48px;
+    margin-bottom: 12px;
+    opacity: 0.3;
+}
+
+.chat-message {
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 13px;
+    max-width: 85%;
+    word-wrap: break-word;
+}
+
+.chat-message.user {
+    align-self: flex-start;
+    background: rgba(100, 100, 100, 0.1);
+    border: 1px solid var(--glass-border);
+}
+
+.chat-message.admin {
+    align-self: flex-end;
+    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+    color: white;
+}
+
+.chat-message.auto-reply {
+    opacity: 0.7;
+    font-style: italic;
+}
+
+.message-time {
+    font-size: 10px;
+    opacity: 0.6;
+    margin-top: 4px;
+}
+
+.chat-input-area {
+    padding: 12px;
+    border-top: 1px solid rgba(0, 0, 0, 0.05);
+    display: flex;
+    gap: 8px;
+}
+
+.chat-input {
+    flex: 1;
+    padding: 10px 12px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.8);
+    font-family: inherit;
+    font-size: 13px;
+    resize: none;
+    max-height: 100px;
+}
+
+.chat-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    background: white;
+}
+
+.chat-send-btn {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+}
+
+/* Settings Panel */
+.settings-panel {
+    grid-column: 1 / -1;
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 24px;
+}
+
+.settings-panel h3 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+}
+
+.auto-replies {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.reply-card {
+    padding: 14px;
+    background: rgba(255, 255, 255, 0.5);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    transition: var(--transition);
+}
+
+.reply-card:hover {
+    background: rgba(255, 255, 255, 0.8);
+}
+
+.reply-text {
+    font-size: 13px;
+    margin-bottom: 10px;
+    line-height: 1.5;
+}
+
+.reply-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.reply-actions button {
+    flex: 1;
+}
+
+.add-reply-form {
+    display: grid;
+    grid-template-columns: 1fr 100px;
+    gap: 12px;
+    align-items: flex-end;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.form-group label {
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.form-group textarea {
+    padding: 10px 12px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.8);
+    font-family: inherit;
+    font-size: 13px;
+    resize: vertical;
+    min-height: 60px;
+}
+
+.form-group textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    background: white;
+}
+
+/* Modal */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal.active {
+    display: flex;
+}
+
+.modal-content {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius);
+    padding: 24px;
+    max-width: 400px;
+    box-shadow: var(--shadow);
+}
+
+.modal-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--gray);
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+    .admin-layout {
+        grid-template-columns: 1fr;
+    }
+    
+    .users-panel,
+    .chat-panel {
+        max-height: none;
+        height: 400px;
+    }
+}
+
+@media (max-width: 768px) {
+    .admin-header {
+        flex-direction: column;
+        gap: 16px;
+    }
+    
+    .auto-replies {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.15);
+}
+
+/* Toast */
+.toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    padding: 14px 20px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    box-shadow: var(--shadow);
+    animation: slideInUp 0.3s ease;
+    z-index: 2000;
+}
+
+@keyframes slideInUp {
+    from {
+        transform: translateY(20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.toast.success {
+    border-left: 4px solid var(--success);
+}
+
+.toast.error {
+    border-left: 4px solid var(--danger);
+}
+</style>
 </head>
 <body>
-    <!-- Mobile Menu Button -->
-    <button class="mobile-menu-btn" id="mobileMenuBtn">
-        <i class="fas fa-bars"></i>
-    </button>
-    
-    <!-- Sidebar Overlay -->
-    <div class="sidebar-overlay" id="sidebarOverlay"></div>
-    
-    <div class="container">
-        <!-- Sidebar -->
-        <div class="sidebar" id="sidebar">
-            <div class="logo">
-                <div class="logo-icon">
-                    <i class="fas fa-crown"></i>
-                </div>
-                <div class="logo-text">
-                    <h1>Flexia Admin</h1>
-                    <span>Chat persists for 2 days</span>
-                </div>
+<div class="admin-container">
+    <!-- Header -->
+    <div class="admin-header">
+        <div>
+            <h1>👨‍💼 Admin Dashboard</h1>
+        </div>
+        <div class="header-actions">
+            <div class="status-badge" id="statusBadge">
+                <i class="fas fa-dot-circle"></i>
+                <span>Connected</span>
             </div>
-            
-            <div class="nav-links">
-                <div class="nav-item active" onclick="showDashboard()">
-                    <div class="nav-icon">
-                        <i class="fas fa-chart-line"></i>
-                    </div>
-                    <div class="nav-text">Dashboard</div>
-                    <div class="nav-badge" id="totalUsersBadge">0</div>
-                </div>
-                
-                <div class="nav-item" onclick="showUsers()">
-                    <div class="nav-icon">
-                        <i class="fas fa-users"></i>
-                    </div>
-                    <div class="nav-text">Users</div>
-                    <div class="nav-badge" id="activeUsersBadge">0</div>
-                </div>
-                
-                <div class="nav-item" onclick="showChat()" id="chatNavItem" style="display: none;">
-                    <div class="nav-icon">
-                        <i class="fas fa-comments"></i>
-                    </div>
-                    <div class="nav-text">Live Chat</div>
-                    <div class="nav-badge" id="unreadBadge">0</div>
-                </div>
-                
-                <div class="nav-item" onclick="showSettings()">
-                    <div class="nav-icon">
-                        <i class="fas fa-cog"></i>
-                    </div>
-                    <div class="nav-text">Settings</div>
-                </div>
+            <button class="btn btn-secondary" id="settingsBtn">
+                <i class="fas fa-cog"></i> Settings
+            </button>
+            <button class="btn btn-secondary" id="logoutBtn">
+                <i class="fas fa-sign-out-alt"></i> Logout
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Layout -->
+    <div class="admin-layout">
+        <!-- Users List -->
+        <div class="users-panel">
+            <div class="panel-header">
+                <h2>Users</h2>
+                <div class="badge" id="userCount">0</div>
             </div>
-            
-            <div class="sidebar-footer">
-                <div class="user-info">
-                    <div class="user-avatar">
-                        <i class="fas fa-user-shield"></i>
-                    </div>
-                    <div class="user-details">
-                        <h4>Administrator</h4>
-                        <span id="adminStatus">Offline</span>
-                    </div>
+            <div class="users-list" id="usersList">
+                <div style="padding: 20px; text-align: center; color: var(--gray);">
+                    <p>Loading users...</p>
                 </div>
-                
-                <button class="logout-btn" onclick="logout()">
-                    <i class="fas fa-sign-out-alt"></i>
-                    Logout
-                </button>
             </div>
         </div>
-        
-        <!-- Main Content -->
-        <div class="main-content">
-            <!-- Dashboard View -->
-            <div id="dashboardView">
-                <div class="header">
-                    <div class="header-title">
-                        <h2>Dashboard Overview</h2>
-                        <p>Chats auto-delete after 48 hours • Auto-cleanup every hour</p>
-                    </div>
-                    <div class="header-actions">
-                        <div class="time-display">
-                            <i class="far fa-clock"></i>
-                            <span id="currentTime">Loading...</span>
-                        </div>
-                        <button class="header-btn btn-primary" onclick="manualCleanup()">
-                            <i class="fas fa-broom"></i>
-                            Cleanup Now
-                        </button>
-                    </div>
-                </div>
-                
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-header">
-                            <div class="stat-icon users">
-                                <i class="fas fa-user-friends"></i>
-                            </div>
-                            <span class="stat-trend" id="userTrend">+0%</span>
-                        </div>
-                        <div class="stat-value" id="totalUsersStat">0</div>
-                        <div class="stat-label">Total Registered Users</div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-header">
-                            <div class="stat-icon messages">
-                                <i class="fas fa-comment-dots"></i>
-                            </div>
-                            <span class="stat-trend" id="messageTrend">+0%</span>
-                        </div>
-                        <div class="stat-value" id="totalMessagesStat">0</div>
-                        <div class="stat-label">Total Messages (48h)</div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-header">
-                            <div class="stat-icon active">
-                                <i class="fas fa-bolt"></i>
-                            </div>
-                            <span class="stat-trend" id="activeTrend">+0%</span>
-                        </div>
-                        <div class="stat-value" id="activeUsersStat">0</div>
-                        <div class="stat-label">Active Users (48h)</div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-header">
-                            <div class="stat-icon files">
-                                <i class="fas fa-file-image"></i>
-                            </div>
-                            <span class="stat-trend" id="expiringTrend">+0%</span>
-                        </div>
-                        <div class="stat-value" id="expiringSoonStat">0</div>
-                        <div class="stat-label">Expiring Soon (24h)</div>
-                    </div>
-                </div>
-                
-                <div class="table-container">
-                    <div class="table-header">
-                        <h3><i class="fas fa-users"></i> Recent Users</h3>
-                        <div class="search-box">
-                            <i class="fas fa-search"></i>
-                            <input type="text" id="userSearch" placeholder="Search users..." onkeyup="searchUsers()">
-                        </div>
-                    </div>
-                    <div class="table-wrapper">
-                        <div id="usersTable">
-                            <div class="loading">
-                                <div class="loading-spinner"></div>
-                                <p>Loading users...</p>
-                            </div>
-                        </div>
-                    </div>
+
+        <!-- Chat Panel -->
+        <div class="chat-panel">
+            <div class="chat-header">
+                <h3 id="selectedUserName">Select a user to chat</h3>
+            </div>
+            <div class="chat-messages" id="chatMessages">
+                <div class="no-user-selected">
+                    <i class="fas fa-inbox"></i>
+                    <p>No user selected</p>
                 </div>
             </div>
-            
-            <!-- Chat View -->
-            <div id="chatView" class="chat-container">
-                <div class="chat-header">
-                    <button class="back-button" onclick="showUsers()">
-                        <i class="fas fa-arrow-left"></i>
-                    </button>
-                    <div class="chat-user-info">
-                        <div class="chat-user-avatar" id="chatUserAvatar">U</div>
-                        <div class="chat-user-details">
-                            <h3 id="chatUserName">Loading...</h3>
-                            <div class="status">
-                                <span class="status-dot"></span>
-                                <span id="chatUserStatus">Offline</span>
-                                •
-                                <span id="chatMessageCount">0 messages</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="chat-messages" id="chatMessages">
-                    <div class="loading">
-                        <div class="loading-spinner"></div>
-                        <p>Loading conversation...</p>
-                    </div>
-                </div>
-                
-                <div class="chat-input-container">
-                    <div class="chat-input-wrapper">
-                        <textarea class="chat-input" id="messageInput" 
-                                  placeholder="Type your message..." 
-                                  rows="1"
-                                  onkeydown="handleChatKeyPress(event)"></textarea>
-                    </div>
-                    <div class="input-actions">
-                        <input type="file" id="imageUpload" accept="image/*" style="display: none;" onchange="uploadImage()">
-                        <button class="input-btn" onclick="document.getElementById('imageUpload').click()">
-                            <i class="fas fa-image"></i>
-                        </button>
-                        <button class="input-btn send-btn" onclick="sendAdminMessage()">
-                            <i class="fas fa-paper-plane"></i>
-                        </button>
-                    </div>
-                </div>
+            <div class="chat-input-area" id="chatInputArea" style="display: none;">
+                <textarea class="chat-input" id="replyInput" placeholder="Type your reply..." rows="2"></textarea>
+                <button class="btn btn-primary chat-send-btn" id="sendReplyBtn">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
             </div>
         </div>
     </div>
 
-    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
-    <script>
-        // Global variables
-        let socket;
-        let currentUser = null;
-        let allUsers = [];
-        let unreadMessages = 0;
-        let isAuthenticated = false;
+    <!-- Settings Panel -->
+    <div class="settings-panel" id="settingsPanel" style="display: none;">
+        <h3>⚙️ Auto-Reply Settings</h3>
+        <p style="font-size: 12px; color: var(--gray); margin-bottom: 16px;">
+            Set up automatic replies for first-time messages. The app will randomly select one of these responses.
+        </p>
+        
+        <div class="auto-replies" id="repliesList">
+            <div style="text-align: center; color: var(--gray); grid-column: 1 / -1;">
+                <p>Loading replies...</p>
+            </div>
+        </div>
 
-        // Initialize
-        function init() {
-            // Check if already authenticated via HTTP session
-            checkAdminSession();
+        <div style="padding: 16px; background: rgba(255, 255, 255, 0.3); border-radius: var(--radius-sm); border: 1px solid var(--glass-border);">
+            <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 12px;">Add New Auto-Reply</h4>
+            <div class="add-reply-form">
+                <div class="form-group">
+                    <label>Reply Message</label>
+                    <textarea id="newReplyText" placeholder="Enter auto-reply message..." rows="2"></textarea>
+                </div>
+                <button class="btn btn-primary" id="addReplyBtn" style="flex: 0 0 auto;">
+                    <i class="fas fa-plus"></i> Add
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal -->
+<div class="modal" id="confirmModal">
+    <div class="modal-content">
+        <button class="modal-close" id="modalClose">&times;</button>
+        <h3 id="modalTitle" style="margin-bottom: 16px;"></h3>
+        <p id="modalMessage" style="margin-bottom: 24px; font-size: 13px;"></p>
+        <div style="display: flex; gap: 8px;">
+            <button class="btn btn-secondary" id="modalCancel" style="flex: 1;">Cancel</button>
+            <button class="btn btn-danger" id="modalConfirm" style="flex: 1;">Delete</button>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+<script>
+    // Initialize admin
+    const socket = io();
+    let selectedUser = null;
+    let users = [];
+    let autReplies = [];
+    let adminDeviceId = localStorage.getItem('adminDeviceId') || generateAdminDeviceId();
+    
+    function generateAdminDeviceId() {
+        const id = 'admin-' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('adminDeviceId', id);
+        return id;
+    }
+
+    // Request notification permission
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+    }
+
+    // Socket Events
+    socket.on('connect', () => {
+        console.log('✅ Admin connected');
+        console.log(`📱 Admin Device ID: ${adminDeviceId}`);
+        updateStatus(true);
+        
+        // Authenticate with password from URL
+        const urlParts = window.location.pathname.split('/');
+        const adminPassword = urlParts[urlParts.length - 1];
+        
+        if (adminPassword) {
+            socket.emit('admin_auth', {
+                password: adminPassword,
+                device_id: adminDeviceId
+            });
+        }
+        
+        loadUsers();
+        loadAutoReplies();
+    });
+
+    socket.on('disconnect', () => {
+        console.log('❌ Admin disconnected');
+        updateStatus(false);
+    });
+
+    socket.on('users_list', (data) => {
+        users = data.users;
+        displayUsers(users);
+        document.getElementById('userCount').textContent = users.length;
+    });
+
+    socket.on('user_messages', (data) => {
+        displayChat(data);
+    });
+
+    socket.on('new_user_message', (data) => {
+        if (selectedUser && selectedUser.device_id === data.device_id) {
+            addChatMessage(data);
+        }
+        
+        // Notify admin
+        if (Notification.permission === 'granted') {
+            new Notification('New Message', {
+                body: `${data.sender}: ${data.message.substring(0, 50)}`,
+                tag: 'new-message',
+                requireInteraction: true
+            });
+        }
+    });
+
+    socket.on('admin_auth_response', (data) => {
+        if (!data.success) {
+            showToast('Authentication failed', 'error');
+            setTimeout(() => window.location.href = '/', 2000);
+        }
+    });
+
+    // UI Functions
+    function updateStatus(connected) {
+        const badge = document.getElementById('statusBadge');
+        if (connected) {
+            badge.classList.remove('offline');
+            badge.innerHTML = '<i class="fas fa-dot-circle"></i><span>Connected</span>';
+        } else {
+            badge.classList.add('offline');
+            badge.innerHTML = '<i class="fas fa-dot-circle"></i><span>Disconnected</span>';
+        }
+    }
+
+    function displayUsers(usersList) {
+        const container = document.getElementById('usersList');
+        
+        if (usersList.length === 0) {
+            container.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--gray);">No users yet</div>';
+            return;
+        }
+
+        container.innerHTML = usersList.map(user => `
+            <div class="user-item ${selectedUser?.device_id === user.device_id ? 'active' : ''}" 
+                 onclick="selectUser('${user.device_id}')">
+                <div class="user-name">${escapeHtml(user.username)}</div>
+                <div class="user-status">
+                    <span class="dot ${user.is_connected ? 'online' : ''}"></span>
+                    ${user.is_connected ? 'Online' : 'Offline'}
+                </div>
+                <div class="user-meta">
+                    <span>${user.message_count} messages</span>
+                    <span>${Math.round(user.inactive_hours)}h ago</span>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function selectUser(deviceId) {
+        selectedUser = users.find(u => u.device_id === deviceId);
+        if (selectedUser) {
+            socket.emit('get_user_messages', { device_id: deviceId });
+            document.getElementById('selectedUserName').textContent = selectedUser.username || 'Anonymous';
+            document.getElementById('chatInputArea').style.display = 'flex';
+            displayUsers(users); // Refresh to show active state
+        }
+    }
+
+    function displayChat(data) {
+        const container = document.getElementById('chatMessages');
+        container.innerHTML = '';
+
+        data.messages.forEach(msg => {
+            addChatMessage(msg);
+        });
+
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function addChatMessage(msg) {
+        const container = document.getElementById('chatMessages');
+        if (!container.querySelector('.no-user-selected')) {
+            const msgEl = document.createElement('div');
+            msgEl.className = `chat-message ${msg.is_admin ? 'admin' : 'user'} ${msg.is_auto_reply ? 'auto-reply' : ''}`;
             
-            connectSocket();
-            updateTime();
-            setInterval(updateTime, 1000);
-            setInterval(fetchStats, 10000); // Update stats every 10 seconds
-            
-            // Mobile menu
-            document.getElementById('mobileMenuBtn').addEventListener('click', toggleMobileMenu);
-            document.getElementById('sidebarOverlay').addEventListener('click', closeMobileMenu);
-            
-            // Auto-resize textarea
-            const textarea = document.getElementById('messageInput');
-            textarea.addEventListener('input', function() {
-                this.style.height = 'auto';
-                this.style.height = (this.scrollHeight) + 'px';
-            });
-        }
-
-        // Check admin session
-        function checkAdminSession() {
-            fetch('/api/stats')
-                .then(response => {
-                    if (response.ok) {
-                        // Already authenticated via HTTP session
-                        isAuthenticated = true;
-                        updateAdminStatus('Online', 'success');
-                    } else {
-                        // Not authenticated, show login prompt
-                        setTimeout(promptAdminLogin, 1000);
-                    }
-                })
-                .catch(() => {
-                    setTimeout(promptAdminLogin, 1000);
-                });
-        }
-
-        // Prompt for admin login
-        function promptAdminLogin() {
-            const password = prompt('🔒 Admin Authentication\n\nEnter admin password:');
-            if (password) {
-                authenticateAdmin(password);
-            } else {
-                window.location.href = '/admin/login';
-            }
-        }
-
-        // Socket.IO connection
-        function connectSocket() {
-            socket = io({
-                transports: ['websocket', 'polling'],
-                reconnection: true,
-                reconnectionAttempts: 10,
-                reconnectionDelay: 1000,
-                timeout: 20000
+            const time = new Date(msg.timestamp).toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit'
             });
 
-            socket.on('connect', () => {
-                console.log('✅ Connected to server:', socket.id);
-                
-                // If already authenticated via HTTP, authenticate via socket too
-                if (isAuthenticated) {
-                    authenticateAdmin('flexia123');
-                }
-            });
-
-            socket.on('connection_established', (data) => {
-                console.log('📡 Connection established:', data);
-            });
-
-            socket.on('disconnect', (reason) => {
-                console.log('❌ Disconnected:', reason);
-                updateAdminStatus('Offline', 'danger');
-                showToast('Disconnected from server', 'error');
-            });
-
-            socket.on('connect_error', (error) => {
-                console.error('Connection error:', error);
-                updateAdminStatus('Connection Error', 'danger');
-            });
-
-            socket.on('reconnect', (attemptNumber) => {
-                console.log('🔄 Reconnected after', attemptNumber, 'attempts');
-                updateAdminStatus('Online', 'success');
-                showToast('Reconnected to server', 'success');
-                
-                // Re-authenticate
-                if (isAuthenticated) {
-                    authenticateAdmin('flexia123');
-                }
-            });
-
-            // Admin authentication events
-            socket.on('admin_auth_success', (data) => {
-                console.log('✅ Admin authenticated:', data);
-                isAuthenticated = true;
-                updateAdminStatus('Online', 'success');
-                showToast('Admin authentication successful', 'success');
-                
-                // Load initial data
-                loadDashboard();
-            });
-
-            socket.on('admin_auth_failed', (data) => {
-                console.error('Admin auth failed');
-                isAuthenticated = false;
-                updateAdminStatus('Unauthorized', 'danger');
-                showToast('Authentication failed', 'error');
-                promptAdminLogin();
-            });
-
-            // Data events
-            socket.on('users_list', (data) => {
-                console.log('📋 Received users list:', data.users.length, 'users');
-                allUsers = data.users;
-                renderUsersTable(data.users);
-                updateBadges(data);
-            });
-
-            socket.on('user_messages', (data) => {
-                console.log('💬 Received user messages:', data.messages.length);
-                renderChatMessages(data.messages, data.username);
-            });
-
-            socket.on('new_user_message', (data) => {
-                console.log('📨 New message from user:', data);
-                
-                if (currentUser && data.device_id === currentUser.device_id) {
-                    // Add to current chat
-                    addMessageToChat(data);
-                } else {
-                    // Increment unread count and show notification
-                    unreadMessages++;
-                    updateUnreadBadge();
-                    showNotification(data.sender, data.message);
-                }
-                
-                // Refresh users list
-                socket.emit('get_all_users', {});
-            });
-
-            socket.on('receive_message', (data) => {
-                console.log('📩 Received message:', data);
-                if (currentUser && data.device_id === currentUser.device_id) {
-                    addMessageToChat(data);
-                }
-            });
-
-            socket.on('user_connected', (data) => {
-                console.log('👤 User connected:', data);
-                showToast(`${data.username} connected`, 'info');
-                socket.emit('get_all_users', {});
-            });
-
-            socket.on('user_disconnected', (data) => {
-                console.log('👋 User disconnected:', data);
-                showToast('User disconnected', 'warning');
-                socket.emit('get_all_users', {});
-            });
-
-            socket.on('user_deleted', (data) => {
-                console.log('🗑️ User deleted:', data);
-                showToast('User deleted successfully', 'success');
-            });
-
-            socket.on('error', (data) => {
-                console.error('Server error:', data);
-                showToast('Error: ' + data.message, 'error');
-            });
-        }
-
-        // Authenticate admin
-        function authenticateAdmin(password) {
-            if (!socket || !socket.connected) {
-                showToast('Not connected to server', 'error');
-                return;
-            }
-            
-            console.log('🔐 Authenticating admin...');
-            socket.emit('admin_auth', { password: password });
-        }
-
-        // Dashboard functions
-        function loadDashboard() {
-            socket.emit('get_all_users', {});
-            fetchStats();
-        }
-
-        function fetchStats() {
-            fetch('/api/stats')
-                .then(response => response.json())
-                .then(data => {
-                    document.getElementById('totalUsersStat').textContent = data.total_users;
-                    document.getElementById('totalMessagesStat').textContent = data.total_messages;
-                    document.getElementById('activeUsersStat').textContent = data.active_users;
-                    document.getElementById('expiringSoonStat').textContent = data.expiring_soon;
-                    
-                    // Update badges
-                    document.getElementById('totalUsersBadge').textContent = data.total_users;
-                    document.getElementById('activeUsersBadge').textContent = data.active_users;
-                    
-                    // Update trends (simple simulation)
-                    updateTrends();
-                })
-                .catch(error => console.error('Error fetching stats:', error));
-        }
-
-        function updateTrends() {
-            // Simple trend simulation
-            document.getElementById('userTrend').textContent = '+12%';
-            document.getElementById('messageTrend').textContent = '+24%';
-            document.getElementById('activeTrend').textContent = '+8%';
-            document.getElementById('expiringTrend').textContent = '+15%';
-        }
-
-        // Users table
-        function renderUsersTable(users) {
-            const container = document.getElementById('usersTable');
-            
-            if (users.length === 0) {
-                container.innerHTML = `
-                    <div class="loading">
-                        <i class="fas fa-users" style="font-size: 48px; margin-bottom: 20px; opacity: 0.3;"></i>
-                        <p>No users found</p>
-                    </div>
-                `;
-                return;
-            }
-
-            let html = `
-                <table>
-                    <thead>
-                        <tr>
-                            <th>User</th>
-                            <th>Device ID</th>
-                            <th>Messages</th>
-                            <th>Last Active</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
+            msgEl.innerHTML = `
+                <div>${escapeHtml(msg.message)}</div>
+                <div class="message-time">${time}</div>
             `;
 
-            users.forEach((user, index) => {
-                const lastActive = new Date(user.last_active);
-                const now = new Date();
-                const hoursAgo = Math.floor((now - lastActive) / (1000 * 60 * 60));
-                const initials = user.username.substring(0, 2).toUpperCase();
-                
-                // Determine status
-                let statusClass, statusText;
-                if (user.is_connected) {
-                    statusClass = 'status-active';
-                    statusText = 'Online';
-                } else if (user.is_active) {
-                    statusClass = 'status-active';
-                    statusText = 'Active';
-                } else {
-                    statusClass = 'status-inactive';
-                    statusText = 'Inactive';
-                }
-                
-                html += `
-                    <tr>
-                        <td>
-                            <div class="user-cell">
-                                <div class="user-avatar-small" style="background: linear-gradient(135deg, ${getColor(index)}, ${getColor(index + 3)});">
-                                    ${initials}
-                                </div>
-                                <div class="user-info-small">
-                                    <h4>${user.username}</h4>
-                                    <span>${user.device_id.substring(0, 8)}...</span>
-                                </div>
-                            </div>
-                        </td>
-                        <td style="font-family: 'Courier New', monospace; font-size: 13px;">
-                            ${user.device_id}
-                        </td>
-                        <td style="font-weight: 600;">${user.message_count}</td>
-                        <td>
-                            <div style="font-weight: 500;">${formatTimeAgo(lastActive)}</div>
-                            <div style="font-size: 12px; color: var(--gray);">${lastActive.toLocaleDateString()}</div>
-                        </td>
-                        <td>
-                            <div class="status-badge ${statusClass}">
-                                <span class="status-dot"></span>
-                                ${statusText}
-                            </div>
-                        </td>
-                        <td>
-                            <div class="action-buttons">
-                                <button class="btn-action btn-chat" onclick="viewUserChat('${user.device_id}', '${user.username}', ${index})">
-                                    <i class="fas fa-comment"></i>
-                                </button>
-                                <button class="btn-action btn-delete" onclick="deleteUser('${user.device_id}', '${user.username}')">
-                                    <i class="fas fa-trash"></i>
-                                </button>
-                            </div>
-                        </td>
-                    </tr>
-                `;
-            });
-
-            html += '</tbody></table>';
-            container.innerHTML = html;
-        }
-
-        function getColor(index) {
-            const colors = ['#4361ee', '#3a0ca3', '#7209b7', '#f72585', '#4cc9f0', '#4895ef', '#f8961e'];
-            return colors[index % colors.length];
-        }
-
-        // Chat functions
-        function viewUserChat(deviceId, username, colorIndex) {
-            if (!isAuthenticated) {
-                showToast('Please authenticate first', 'error');
-                return;
-            }
-            
-            currentUser = { device_id: deviceId, username: username };
-            
-            // Update UI
-            document.getElementById('dashboardView').style.display = 'none';
-            document.getElementById('chatView').style.display = 'flex';
-            document.getElementById('chatNavItem').style.display = 'flex';
-            
-            // Update chat header
-            document.getElementById('chatUserName').textContent = username;
-            document.getElementById('chatUserAvatar').textContent = username.substring(0, 2).toUpperCase();
-            document.getElementById('chatUserAvatar').style.background = `linear-gradient(135deg, ${getColor(colorIndex)}, ${getColor(colorIndex + 3)})`;
-            
-            // Load messages
-            socket.emit('get_user_messages', { device_id: deviceId });
-            
-            // Update status
-            const user = allUsers.find(u => u.device_id === deviceId);
-            if (user) {
-                const statusElement = document.getElementById('chatUserStatus');
-                const statusDot = statusElement.previousElementSibling;
-                
-                if (user.is_connected) {
-                    statusElement.textContent = 'Online';
-                    statusDot.style.background = 'var(--success)';
-                } else if (user.is_active) {
-                    statusElement.textContent = 'Active';
-                    statusDot.style.background = 'var(--success)';
-                } else {
-                    statusElement.textContent = 'Inactive';
-                    statusDot.style.background = 'var(--danger)';
-                }
-                
-                document.getElementById('chatMessageCount').textContent = `${user.message_count} messages (48h retention)`;
-            }
-            
-            closeMobileMenu();
-            
-            // Clear unread messages for this user
-            unreadMessages = 0;
-            updateUnreadBadge();
-        }
-
-        function renderChatMessages(messages, username) {
-            const container = document.getElementById('chatMessages');
-            
-            if (messages.length === 0) {
-                container.innerHTML = `
-                    <div class="loading">
-                        <i class="far fa-comments" style="font-size: 48px; margin-bottom: 20px; opacity: 0.3;"></i>
-                        <p>No messages yet. Start the conversation!</p>
-                        <p style="font-size: 13px; margin-top: 10px;">This is the beginning of your chat with ${username}</p>
-                    </div>
-                `;
-                return;
-            }
-
-            let html = '';
-            let lastDate = null;
-            
-            messages.forEach(msg => {
-                const msgDate = new Date(msg.timestamp);
-                const today = new Date();
-                
-                // Add date separator
-                const dateStr = msgDate.toLocaleDateString();
-                if (lastDate !== dateStr) {
-                    lastDate = dateStr;
-                    const dateLabel = isSameDay(msgDate, today) ? 'Today' : 
-                                     isSameDay(msgDate, new Date(today - 86400000)) ? 'Yesterday' : 
-                                     msgDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
-                    
-                    html += `
-                        <div style="text-align: center; margin: 20px 0;">
-                            <span style="background: var(--gray-light); padding: 5px 15px; border-radius: 20px; font-size: 12px; color: var(--gray);">
-                                ${dateLabel}
-                            </span>
-                        </div>
-                    `;
-                }
-                
-                const time = msgDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                
-                // Calculate expiration info
-                let expirationHtml = '';
-                if (msg.expires_at) {
-                    const expiresDate = new Date(msg.expires_at);
-                    const hoursLeft = Math.ceil((expiresDate - new Date()) / (1000 * 60 * 60));
-                    if (hoursLeft > 0) {
-                        expirationHtml = `<div class="expiration-info">Expires in ${hoursLeft} hours</div>`;
-                    }
-                }
-                
-                if (msg.type === 'image') {
-                    html += `
-                        <div class="message ${msg.is_admin ? 'admin' : 'user'}">
-                            <div class="message-bubble">
-                                <div class="message-sender">${msg.sender}</div>
-                                <div class="message-image">
-                                    <img src="${msg.message}" alt="Image" style="cursor: pointer;" onclick="openImageModal('${msg.message}')">
-                                </div>
-                                <div class="message-time">${time}</div>
-                                ${expirationHtml}
-                            </div>
-                        </div>
-                    `;
-                } else {
-                    html += `
-                        <div class="message ${msg.is_admin ? 'admin' : 'user'}">
-                            <div class="message-bubble">
-                                <div class="message-sender">${msg.sender}</div>
-                                <div class="message-text">${msg.message}</div>
-                                <div class="message-time">${time}</div>
-                                ${expirationHtml}
-                            </div>
-                        </div>
-                    `;
-                }
-            });
-
-            container.innerHTML = html;
-            scrollToBottom();
-        }
-
-        function addMessageToChat(message) {
-            const container = document.getElementById('chatMessages');
-            
-            // Remove loading state if present
-            if (container.querySelector('.loading')) {
-                container.innerHTML = '';
-            }
-            
-            const msgDate = new Date(message.timestamp);
-            const today = new Date();
-            const time = msgDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            
-            // Calculate expiration info
-            let expirationHtml = '';
-            if (message.expires_at) {
-                const expiresDate = new Date(message.expires_at);
-                const hoursLeft = Math.ceil((expiresDate - new Date()) / (1000 * 60 * 60));
-                if (hoursLeft > 0) {
-                    expirationHtml = `<div class="expiration-info">Expires in ${hoursLeft} hours</div>`;
-                }
-            }
-            
-            let messageHtml;
-            if (message.type === 'image') {
-                messageHtml = `
-                    <div class="message ${message.is_admin ? 'admin' : 'user'}">
-                        <div class="message-bubble">
-                            <div class="message-sender">${message.sender}</div>
-                            <div class="message-image">
-                                <img src="${message.message}" alt="Image" style="cursor: pointer;" onclick="openImageModal('${message.message}')">
-                            </div>
-                            <div class="message-time">${time}</div>
-                            ${expirationHtml}
-                        </div>
-                    </div>
-                `;
-            } else {
-                messageHtml = `
-                    <div class="message ${message.is_admin ? 'admin' : 'user'}">
-                        <div class="message-bubble">
-                            <div class="message-sender">${message.sender}</div>
-                            <div class="message-text">${message.message}</div>
-                            <div class="message-time">${time}</div>
-                            ${expirationHtml}
-                        </div>
-                    </div>
-                `;
-            }
-            
-            container.insertAdjacentHTML('beforeend', messageHtml);
-            scrollToBottom();
-        }
-
-        function sendAdminMessage() {
-            if (!currentUser || !isAuthenticated) {
-                showToast('Please select a user and authenticate first', 'error');
-                return;
-            }
-            
-            const input = document.getElementById('messageInput');
-            const message = input.value.trim();
-            
-            if (!message) {
-                showToast('Message cannot be empty', 'warning');
-                return;
-            }
-            
-            console.log('📤 Sending admin message:', { device_id: currentUser.device_id, message });
-            
-            socket.emit('admin_message', {
-                device_id: currentUser.device_id,
-                message: message
-            });
-            
-            input.value = '';
-            input.style.height = 'auto';
-            input.focus();
-        }
-
-        function uploadImage() {
-            if (!currentUser || !isAuthenticated) {
-                showToast('Please select a user and authenticate first', 'error');
-                return;
-            }
-            
-            const fileInput = document.getElementById('imageUpload');
-            const file = fileInput.files[0];
-            
-            if (!file) return;
-            
-            if (file.size > 5 * 1024 * 1024) { // 5MB limit
-                showToast('File size must be less than 5MB', 'error');
-                return;
-            }
-            
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                console.log('📸 Uploading image for:', currentUser.device_id);
-                
-                socket.emit('upload_image', {
-                    device_id: currentUser.device_id,
-                    image: e.target.result,
-                    filename: file.name,
-                    is_admin: true
-                });
-                
-                fileInput.value = '';
-                showToast('Image uploaded successfully', 'success');
-            };
-            
-            reader.onerror = function() {
-                showToast('Failed to read image file', 'error');
-                fileInput.value = '';
-            };
-            
-            reader.readAsDataURL(file);
-        }
-
-        // Utility functions
-        function updateTime() {
-            const now = new Date();
-            const options = { 
-                weekday: 'long', 
-                year: 'numeric', 
-                month: 'long', 
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit'
-            };
-            document.getElementById('currentTime').textContent = now.toLocaleDateString('en-US', options);
-        }
-
-        function formatTimeAgo(date) {
-            const now = new Date();
-            const diffMs = now - date;
-            const diffMins = Math.round(diffMs / 60000);
-            const diffHours = Math.round(diffMs / 3600000);
-            const diffDays = Math.round(diffMs / 86400000);
-            
-            if (diffMins < 1) return 'Just now';
-            if (diffMins < 60) return `${diffMins}m ago`;
-            if (diffHours < 24) return `${diffHours}h ago`;
-            if (diffDays < 7) return `${diffDays}d ago`;
-            return date.toLocaleDateString();
-        }
-
-        function isSameDay(d1, d2) {
-            return d1.getDate() === d2.getDate() &&
-                   d1.getMonth() === d2.getMonth() &&
-                   d1.getFullYear() === d2.getFullYear();
-        }
-
-        function scrollToBottom() {
-            const container = document.getElementById('chatMessages');
+            container.appendChild(msgEl);
             container.scrollTop = container.scrollHeight;
         }
+    }
 
-        function handleChatKeyPress(event) {
-            if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                sendAdminMessage();
-            }
-        }
+    function displayChat(data) {
+        const container = document.getElementById('chatMessages');
+        container.innerHTML = data.messages.map(msg => {
+            const time = new Date(msg.timestamp).toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
 
-        function searchUsers() {
-            const searchTerm = document.getElementById('userSearch').value.toLowerCase();
-            const filteredUsers = allUsers.filter(user => 
-                user.username.toLowerCase().includes(searchTerm) ||
-                user.device_id.toLowerCase().includes(searchTerm)
-            );
-            renderUsersTable(filteredUsers);
-        }
-
-        function deleteUser(deviceId, username) {
-            if (!isAuthenticated) {
-                showToast('Please authenticate first', 'error');
-                return;
-            }
-            
-            if (confirm(`Are you sure you want to delete user "${username}" (${deviceId}) and all their data? This action cannot be undone.`)) {
-                console.log('🗑️ Deleting user:', deviceId);
-                socket.emit('delete_user', { device_id: deviceId });
-            }
-        }
-
-        function manualCleanup() {
-            if (!isAuthenticated) {
-                showToast('Please authenticate first', 'error');
-                return;
-            }
-            
-            if (confirm('This will delete all chats older than 2 days. Continue?')) {
-                fetch('/api/cleanup', { method: 'POST' })
-                    .then(response => response.json())
-                    .then(data => {
-                        showToast(`Cleanup completed: ${data.result.messages} messages, ${data.result.files} files, ${data.result.users} users deleted`, 'success');
-                        socket.emit('get_all_users', {});
-                    })
-                    .catch(error => {
-                        showToast('Cleanup failed: ' + error.message, 'error');
-                    });
-            }
-        }
-
-        function logout() {
-            if (socket) socket.disconnect();
-            window.location.href = '/admin/logout';
-        }
-
-        // Mobile menu
-        function toggleMobileMenu() {
-            document.getElementById('sidebar').classList.toggle('mobile-open');
-            document.getElementById('sidebarOverlay').classList.toggle('active');
-        }
-
-        function closeMobileMenu() {
-            document.getElementById('sidebar').classList.remove('mobile-open');
-            document.getElementById('sidebarOverlay').classList.remove('active');
-        }
-
-        // UI helpers
-        function updateAdminStatus(status, type) {
-            const element = document.getElementById('adminStatus');
-            element.textContent = status;
-            element.style.color = `var(--${type})`;
-        }
-
-        function updateBadges(data) {
-            document.getElementById('totalUsersBadge').textContent = data.total;
-            const activeCount = data.users.filter(u => u.is_active).length;
-            document.getElementById('activeUsersBadge').textContent = activeCount;
-        }
-
-        function updateUnreadBadge() {
-            const badge = document.getElementById('unreadBadge');
-            badge.textContent = unreadMessages;
-            badge.style.display = unreadMessages > 0 ? 'block' : 'none';
-        }
-
-        function showNotification(title, message) {
-            if ('Notification' in window && Notification.permission === 'granted') {
-                new Notification(`Flexia Admin: ${title}`, {
-                    body: message.length > 50 ? message.substring(0, 50) + '...' : message,
-                    icon: '/favicon.ico'
-                });
-            }
-        }
-
-        function showToast(message, type) {
-            // Remove existing toasts
-            const existingToasts = document.querySelectorAll('.toast');
-            existingToasts.forEach(toast => toast.remove());
-            
-            // Create toast
-            const toast = document.createElement('div');
-            toast.className = `toast toast-${type}`;
-            toast.innerHTML = `
-                <i class="fas ${type === 'error' ? 'fa-exclamation-circle' : 
-                              type === 'warning' ? 'fa-exclamation-triangle' : 
-                              'fa-check-circle'}"></i>
-                <span>${message}</span>
-            `;
-            
-            document.body.appendChild(toast);
-            
-            // Auto-remove after 3 seconds
-            setTimeout(() => {
-                toast.style.animation = 'slideUp 0.3s ease';
-                setTimeout(() => toast.remove(), 300);
-            }, 3000);
-        }
-
-        // Image modal
-        function openImageModal(imageUrl) {
-            const modal = document.createElement('div');
-            modal.style.cssText = `
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                background: rgba(0, 0, 0, 0.9);
-                z-index: 10000;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                animation: fadeIn 0.3s ease;
-            `;
-            
-            modal.innerHTML = `
-                <div style="position: relative; max-width: 90%; max-height: 90%;">
-                    <button onclick="this.parentElement.parentElement.remove()" 
-                            style="position: absolute; top: -40px; right: 0; background: none; border: none; color: white; font-size: 30px; cursor: pointer; opacity: 0.7; transition: 0.3s;">
-                        ×
-                    </button>
-                    <img src="${imageUrl}" alt="Preview" style="width: 100%; height: auto; border-radius: 10px;">
+            return `
+                <div class="chat-message ${msg.is_admin ? 'admin' : 'user'} ${msg.is_auto_reply ? 'auto-reply' : ''}">
+                    <div>${escapeHtml(msg.message)}</div>
+                    <div class="message-time">${time}</div>
                 </div>
             `;
-            
-            modal.addEventListener('click', (e) => {
-                if (e.target === modal) {
-                    modal.remove();
-                }
-            });
-            
-            document.body.appendChild(modal);
+        }).join('');
+
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function loadAutoReplies() {
+        fetch('/admin/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'get_replies' })
+        })
+        .then(r => r.json())
+        .then(data => {
+            autoReplies = data.replies || [];
+            displayAutoReplies();
+        });
+    }
+
+    function displayAutoReplies() {
+        const container = document.getElementById('repliesList');
+        
+        if (autoReplies.length === 0) {
+            container.innerHTML = '<div style="text-align: center; color: var(--gray); grid-column: 1 / -1;">No auto-replies yet</div>';
+            return;
         }
 
-        // Navigation
-        function showDashboard() {
-            document.getElementById('dashboardView').style.display = 'block';
-            document.getElementById('chatView').style.display = 'none';
-            updateNavActive(0);
-            loadDashboard();
-            closeMobileMenu();
-        }
+        container.innerHTML = autoReplies.map(reply => `
+            <div class="reply-card">
+                <div class="reply-text">"${escapeHtml(reply.text)}"</div>
+                <div class="reply-actions">
+                    <button class="btn btn-sm btn-danger" onclick="deleteReply(${reply.id})">
+                        <i class="fas fa-trash"></i> Delete
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    }
 
-        function showUsers() {
-            document.getElementById('dashboardView').style.display = 'block';
-            document.getElementById('chatView').style.display = 'none';
-            updateNavActive(1);
-            socket.emit('get_all_users', {});
-            closeMobileMenu();
-        }
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
 
-        function showChat() {
-            if (currentUser) {
-                document.getElementById('dashboardView').style.display = 'none';
-                document.getElementById('chatView').style.display = 'flex';
-                updateNavActive(2);
-            } else {
-                showToast('Please select a user first', 'warning');
-                showUsers();
+    function showToast(message, type = 'info') {
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        toast.textContent = message;
+        document.body.appendChild(toast);
+
+        setTimeout(() => {
+            toast.remove();
+        }, 3000);
+    }
+
+    // Event Listeners
+    document.getElementById('sendReplyBtn').addEventListener('click', () => {
+        const message = document.getElementById('replyInput').value.trim();
+        if (!message || !selectedUser) return;
+
+        socket.emit('admin_send_message', {
+            device_id: selectedUser.device_id,
+            message: message
+        });
+
+        document.getElementById('replyInput').value = '';
+        showToast('Message sent', 'success');
+    });
+
+    document.getElementById('addReplyBtn').addEventListener('click', () => {
+        const text = document.getElementById('newReplyText').value.trim();
+        if (!text) return;
+
+        fetch('/admin/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'add_reply', reply_text: text })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('newReplyText').value = '';
+                loadAutoReplies();
+                showToast('Auto-reply added', 'success');
             }
-            closeMobileMenu();
-        }
+        });
+    });
 
-        function showSettings() {
-            alert('Settings Panel\n\n• Admin Password: flexia123\n• Chat Retention: 48 hours\n• Auto-cleanup: Every 1 hour\n• Max file size: 5MB\n• Messages auto-delete after 2 days');
-            closeMobileMenu();
-        }
+    document.getElementById('logoutBtn').addEventListener('click', () => {
+        localStorage.removeItem('adminToken');
+        window.location.href = '/';
+    });
 
-        function updateNavActive(index) {
-            document.querySelectorAll('.nav-item').forEach((item, i) => {
-                item.classList.toggle('active', i === index);
-            });
-        }
+    document.getElementById('settingsBtn').addEventListener('click', () => {
+        const panel = document.getElementById('settingsPanel');
+        panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    });
 
-        // Request notification permission
-        if ('Notification' in window && Notification.permission === 'default') {
-            Notification.requestPermission();
-        }
+    // Load initial data
+    function loadUsers() {
+        socket.emit('get_all_users', {});
+    }
 
-        // Initialize on load
-        window.onload = init;
+    // Refresh users every 5 seconds
+    setInterval(loadUsers, 5000);
 
-        // Debug utilities
-        window.adminDebug = {
-            getState: () => ({
-                isAuthenticated,
-                socketConnected: socket?.connected,
-                socketId: socket?.id,
-                currentUser,
-                allUsersCount: allUsers.length,
-                unreadMessages
-            }),
-            testConnection: () => {
-                showToast(socket?.connected ? 'Connected: ' + socket.id : 'Not connected', 
-                         socket?.connected ? 'success' : 'error');
-            },
-            reloadUsers: () => {
-                socket.emit('get_all_users', {});
-                showToast('Reloading users...', 'info');
-            }
-        };
-    </script>
+    console.log('🚀 Admin panel initialized');
+</script>
 </body>
 </html>
