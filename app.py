@@ -193,9 +193,9 @@ def send_auto_reply(device_id, message_type='first'):
     if message_type == 'first':
         reply_text = get_auto_reply()
     elif message_type == 'image':
-        reply_text = "Please wait while I review your image 📸"
+        reply_text = "Please wait while I review"
     elif message_type == 'text':
-        reply_text = "We'll get back to you in a bit ⏳"
+        reply_text = "I'll get back to you soon"
     else:
         return None
     
@@ -442,10 +442,11 @@ def handle_send_message(data):
         # Send automatic reply if appropriate
         if is_first_message:
             send_auto_reply(device_id, 'first')
-        elif msg_type == 'image':
-            send_auto_reply(device_id, 'image')
-        elif msg_type == 'text' and user_message_count == 1:  # Second message
-            send_auto_reply(device_id, 'text')
+        elif user_message_count == 1:  # This is the user's 2nd message
+            if msg_type == 'image':
+                send_auto_reply(device_id, 'image')
+            else:
+                send_auto_reply(device_id, 'text')
         
         print(f'💬 Message received from {device_id}: {message[:50]}...')
         
@@ -526,6 +527,13 @@ def handle_upload_image(data):
     c = conn.cursor()
     
     try:
+        # Check if this is the first or second message from this user
+        c.execute('SELECT COUNT(*) FROM messages WHERE device_id = ? AND sender != "Support"',
+                  (device_id,))
+        user_message_count = c.fetchone()[0]
+        is_first_message = user_message_count == 0
+        is_second_message = user_message_count == 1
+
         # Decode and save image
         image_bytes = base64.b64decode(image_data.split(',')[1])
         filename = f"{uuid.uuid4()}_image.png"
@@ -567,8 +575,11 @@ def handle_upload_image(data):
         else:
             emit('receive_message', message_data, room=device_id)
             emit('new_user_message', message_data, room='admin_room')
-            # Send auto-reply for image
-            send_auto_reply(device_id, 'image')
+            # Send auto-reply based on message position
+            if is_first_message:
+                send_auto_reply(device_id, 'first')
+            elif is_second_message:
+                send_auto_reply(device_id, 'image')
         
         print(f'📷 Image uploaded (expires: {expires_at})')
         
