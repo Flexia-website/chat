@@ -2,481 +2,395 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Flexia • Support Chat</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0">
+<meta name="theme-color" content="#0E1013">
+<title>Support</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root {
-    --primary: #4361ee;
-    --primary-light: #4895ef;
-    --primary-dark: #3a0ca3;
-    --secondary: #7209b7;
-    --accent: #f72585;
-    --success: #4cc9f0;
-    --warning: #f8961e;
-    --danger: #ef233c;
-    --light: #f8f9fa;
-    --dark: #212529;
-    --gray: #6c757d;
-    --gray-light: #e9ecef;
-    --glass-bg: rgba(255, 255, 255, 0.7);
-    --glass-border: rgba(255, 255, 255, 0.18);
-    --shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.05);
-    --radius: 16px;
-    --radius-sm: 10px;
-    --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --ink: #0E1013;
+    --ink-soft: #171A1F;
+    --ink-line: rgba(255, 255, 255, 0.08);
+    --bone: #FAF8F4;
+    --bone-dim: #EFEBE2;
+    --paper: #F4F1EA;
+    --brass: #B8925A;
+    --brass-bright: #D9B27C;
+    --signal: #3ECF8E;
+    --danger: #E15252;
+    --text-soft: rgba(14, 16, 19, 0.55);
+    --shadow-lg: 0 24px 60px rgba(10, 11, 14, 0.35);
+    --shadow-sm: 0 2px 10px rgba(10, 11, 14, 0.08);
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+    height: 100%;
+    overscroll-behavior: none;
 }
 
 body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    min-height: 100vh;
+    background:
+        radial-gradient(120% 100% at 15% 0%, #23262c 0%, var(--ink) 55%),
+        var(--ink);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
     display: flex;
     justify-content: center;
     align-items: center;
-    padding: 12px;
-    color: var(--dark);
-    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
 }
 
-/* Main Chat Container */
+/* ===== App Shell ===== */
 .chat-app {
     width: 100%;
-    max-width: 360px;
-    height: calc(100vh - 24px);
-    max-height: 700px;
-    background: var(--glass-bg);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    overflow: hidden;
+    max-width: 428px;
+    height: 100dvh;
+    background: var(--bone);
     display: flex;
     flex-direction: column;
     position: relative;
-    animation: slideUp 0.4s ease;
+    overflow: hidden;
 }
 
-@keyframes slideUp {
-    from {
-        opacity: 0;
-        transform: translateY(30px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
+@media (min-width: 641px) {
+    body { padding: 32px; }
+    .chat-app {
+        height: min(760px, 92dvh);
+        max-height: 92dvh;
+        border-radius: 26px;
+        box-shadow: var(--shadow-lg);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        animation: riseIn 0.5s var(--ease);
     }
 }
 
-/* Header */
+@keyframes riseIn {
+    from { opacity: 0; transform: translateY(18px) scale(0.99); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ===== Header ===== */
 .chat-header {
-    background: linear-gradient(135deg, rgba(67, 97, 238, 0.8), rgba(58, 12, 163, 0.8));
-    backdrop-filter: blur(10px);
-    color: white;
-    padding: 16px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    background: var(--ink);
+    color: var(--bone);
+    padding: 18px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
     position: relative;
 }
 
-.header-content {
-    display: flex;
-    align-items: center;
-    gap: 10px;
+.chat-header::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--brass) 35%, var(--brass-bright) 50%, var(--brass) 65%, transparent);
+    opacity: 0.7;
 }
 
-.logo {
-    width: 36px;
-    height: 36px;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 10px;
+.avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    background: linear-gradient(155deg, var(--ink-soft), #24282f);
+    border: 1px solid var(--ink-line);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 18px;
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    font-size: 16px;
+    color: var(--brass-bright);
+    flex-shrink: 0;
 }
 
-.title-section {
-    flex: 1;
-}
+.title-section { flex: 1; min-width: 0; }
 
 .title-section h1 {
+    font-family: 'Manrope', sans-serif;
     font-size: 16px;
-    font-weight: 600;
-    margin-bottom: 2px;
+    font-weight: 700;
+    letter-spacing: 0.1px;
 }
 
 .title-section p {
-    font-size: 11px;
-    opacity: 0.9;
+    font-size: 12px;
+    color: rgba(250, 248, 244, 0.55);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+}
+
+.status-indicator {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--danger);
+    flex-shrink: 0;
+    transition: background 0.3s var(--ease);
+}
+
+.status-indicator.connected {
+    background: var(--signal);
+    box-shadow: 0 0 0 3px rgba(62, 207, 142, 0.18);
 }
 
 .notification-badge {
-    width: 24px;
-    height: 24px;
+    width: 22px;
+    height: 22px;
     background: var(--danger);
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 700;
+    color: white;
     opacity: 0;
     transform: scale(0);
-    transition: var(--transition);
+    transition: all 0.25s var(--ease);
 }
 
-.notification-badge.active {
-    opacity: 1;
-    transform: scale(1);
-}
+.notification-badge.active { opacity: 1; transform: scale(1); }
 
-/* Messages Container */
+/* ===== Messages ===== */
 .messages-container {
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 14px;
+    padding: 20px 16px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 4px;
+    background: var(--paper);
     scroll-behavior: smooth;
 }
 
-.messages-container::-webkit-scrollbar {
-    width: 4px;
-}
+.messages-container::-webkit-scrollbar { width: 4px; }
+.messages-container::-webkit-scrollbar-track { background: transparent; }
+.messages-container::-webkit-scrollbar-thumb { background: rgba(14, 16, 19, 0.15); border-radius: 2px; }
 
-.messages-container::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.messages-container::-webkit-scrollbar-thumb {
-    background: rgba(0, 0, 0, 0.1);
-    border-radius: 2px;
-}
-
-.messages-container::-webkit-scrollbar-thumb:hover {
-    background: rgba(0, 0, 0, 0.15);
-}
-
-/* Message Bubble */
 .message {
     display: flex;
-    margin-bottom: 6px;
-    animation: messageSlideIn 0.3s ease;
-    font-size: 13px;
+    flex-direction: column;
+    margin-bottom: 12px;
+    animation: msgIn 0.28s var(--ease);
+    max-width: 78%;
 }
 
-@keyframes messageSlideIn {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+@keyframes msgIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
-.message.user {
-    justify-content: flex-end;
-}
-
-.message.admin {
-    justify-content: flex-start;
-}
+.message.user { align-self: flex-end; align-items: flex-end; }
+.message.admin { align-self: flex-start; align-items: flex-start; }
 
 .message-content {
-    max-width: 75%;
-    padding: 10px 12px;
-    border-radius: 12px;
+    padding: 11px 14px;
+    border-radius: 16px;
     word-wrap: break-word;
-    line-height: 1.4;
-    box-shadow: var(--shadow-sm);
+    line-height: 1.45;
+    font-size: 14px;
 }
 
 .message.user .message-content {
-    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-    color: white;
-    border-radius: 12px 4px 12px 12px;
+    background: var(--ink);
+    color: var(--bone);
+    border-radius: 16px 4px 16px 16px;
 }
 
 .message.admin .message-content {
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
-    color: var(--dark);
-    border-radius: 4px 12px 12px 12px;
+    background: #FFFFFF;
+    color: var(--ink);
+    border: 1px solid rgba(14, 16, 19, 0.06);
+    box-shadow: var(--shadow-sm);
+    border-radius: 4px 16px 16px 16px;
 }
 
-.message-content.image {
-    padding: 6px;
-    border-radius: 10px;
-}
-
-.message-content img {
+.message-content.image { padding: 4px; border-radius: 14px; }
+.message-content.image img {
+    display: block;
     max-width: 100%;
-    border-radius: 8px;
-    max-height: 180px;
+    max-height: 220px;
+    border-radius: 11px;
+    cursor: zoom-in;
 }
 
 .message-time {
     font-size: 10px;
-    opacity: 0.6;
+    color: var(--text-soft);
     margin-top: 4px;
-    padding: 0 12px;
+    padding: 0 4px;
 }
 
-.auto-reply-badge {
-    font-size: 9px;
-    opacity: 0.7;
-    font-style: italic;
-    margin-top: 3px;
-}
-
-/* Input Area */
+/* ===== Input Area ===== */
 .input-area {
-    border-top: 1px solid rgba(0, 0, 0, 0.05);
-    padding: 12px;
-    background: rgba(255, 255, 255, 0.5);
-    backdrop-filter: blur(10px);
+    border-top: 1px solid rgba(14, 16, 19, 0.08);
+    padding: 12px 14px;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+    background: var(--bone);
     display: flex;
     gap: 8px;
-    align-items: flex-end;
+    align-items: center;
+    flex-shrink: 0;
 }
 
 .input-group {
     flex: 1;
     display: flex;
-    gap: 8px;
-    align-items: flex-end;
+    align-items: center;
+    gap: 6px;
+    background: var(--bone-dim);
+    border: 1px solid rgba(14, 16, 19, 0.07);
+    border-radius: 24px;
+    padding: 4px 4px 4px 16px;
+    transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
+}
+
+.input-group:focus-within {
+    border-color: var(--brass);
+    background: #FFFFFF;
 }
 
 .message-input {
     flex: 1;
-    padding: 10px 12px;
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-sm);
-    background: rgba(255, 255, 255, 0.8);
+    border: none;
+    background: transparent;
     font-family: inherit;
-    font-size: 13px;
-    resize: none;
-    max-height: 100px;
-    transition: var(--transition);
-    backdrop-filter: blur(10px);
-}
-
-.message-input:focus {
+    font-size: 14px;
+    padding: 8px 0;
     outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.1);
-    background: white;
+    color: var(--ink);
 }
 
-.message-input::placeholder {
-    color: var(--gray);
-    font-size: 12px;
-}
-
-.button-group {
-    display: flex;
-    gap: 6px;
-}
+.message-input::placeholder { color: var(--text-soft); }
 
 .input-btn {
-    width: 36px;
-    height: 36px;
+    width: 34px;
+    height: 34px;
     border: none;
-    border-radius: 10px;
-    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-    color: white;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-soft);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 16px;
-    transition: var(--transition);
-    box-shadow: var(--shadow-sm);
+    font-size: 15px;
+    flex-shrink: 0;
+    transition: all 0.2s var(--ease);
 }
 
-.input-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow);
-}
+.input-btn:hover { color: var(--ink); background: rgba(14, 16, 19, 0.06); }
 
-.input-btn:active {
-    transform: translateY(0);
-}
-
-.input-btn.secondary {
-    background: rgba(255, 255, 255, 0.6);
-    color: var(--primary);
-    border: 1px solid var(--glass-border);
-}
-
-.input-btn.secondary:hover {
-    background: rgba(255, 255, 255, 0.8);
-}
-
-/* Status Indicator */
-.status-indicator {
-    width: 8px;
-    height: 8px;
+.send-btn {
+    width: 42px;
+    height: 42px;
+    border: none;
     border-radius: 50%;
-    background: var(--danger);
-    margin-left: 8px;
-    animation: pulse 2s infinite;
-}
-
-.status-indicator.connected {
-    background: var(--success);
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-}
-
-/* Loading */
-.loading-dots {
+    background: var(--ink);
+    color: var(--brass-bright);
+    cursor: pointer;
     display: flex;
-    gap: 3px;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    flex-shrink: 0;
+    transition: transform 0.15s var(--ease), box-shadow 0.15s var(--ease);
+    box-shadow: 0 4px 14px rgba(14, 16, 19, 0.25);
 }
 
-.loading-dots span {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: currentColor;
-    opacity: 0.4;
-    animation: bounce 1.4s infinite;
-}
+.send-btn:hover { transform: translateY(-1px); }
+.send-btn:active { transform: translateY(0) scale(0.96); }
+.send-btn:disabled { opacity: 0.4; cursor: default; transform: none; }
 
-.loading-dots span:nth-child(2) {
-    animation-delay: 0.2s;
-}
-
-.loading-dots span:nth-child(3) {
-    animation-delay: 0.4s;
-}
-
-@keyframes bounce {
-    0%, 80%, 100% { transform: scale(1); }
-    40% { transform: scale(1.2); }
-}
-
-/* Empty State */
+/* ===== Empty State ===== */
 .empty-state {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     height: 100%;
-    padding: 20px;
+    padding: 24px;
     text-align: center;
-    color: var(--gray);
+    color: var(--text-soft);
 }
 
-.empty-state i {
-    font-size: 48px;
-    margin-bottom: 12px;
-    opacity: 0.3;
+.empty-state .empty-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 16px;
+    background: var(--bone-dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    color: var(--brass);
+    margin-bottom: 14px;
 }
 
 .empty-state h3 {
-    font-size: 14px;
+    font-family: 'Manrope', sans-serif;
+    font-size: 15px;
     margin-bottom: 6px;
-    font-weight: 600;
+    font-weight: 700;
+    color: var(--ink);
 }
 
-.empty-state p {
-    font-size: 12px;
-    opacity: 0.7;
-}
+.empty-state p { font-size: 12.5px; max-width: 220px; line-height: 1.5; }
 
-/* File Input */
-#imageInput {
-    display: none;
-}
+#imageInput { display: none; }
 
-/* Responsive */
-@media (max-width: 480px) {
-    .chat-app {
-        max-width: 100%;
-        max-height: 100%;
-    }
-    
-    .message-content {
-        max-width: 85%;
-        font-size: 12px;
-    }
-}
-
-/* Animation */
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-    }
-    to {
-        opacity: 1;
-    }
-}
-
-.fade-in {
-    animation: fadeIn 0.3s ease;
+/* ===== Small screens: true full-bleed, no scroll on body ===== */
+@media (max-width: 640px) {
+    body { padding: 0; }
+    .chat-app { max-width: none; width: 100vw; height: 100dvh; }
 }
 </style>
 </head>
 <body>
 <div class="chat-app">
-    <!-- Header -->
     <div class="chat-header">
-        <div class="header-content">
-            <div class="logo">💬</div>
-            <div class="title-section">
-                <h1>Flexia Support</h1>
-                <p id="status" class="fade-in">Connecting...</p>
-            </div>
-            <div class="notification-badge" id="notificationBadge">
-                <span id="notificationCount">1</span>
-            </div>
+        <div class="avatar"><i class="fa-solid fa-headset"></i></div>
+        <div class="title-section">
+            <h1>Support</h1>
+            <p><span class="status-indicator" id="statusDot"></span><span id="status">Connecting</span></p>
+        </div>
+        <div class="notification-badge" id="notificationBadge">
+            <span id="notificationCount">1</span>
         </div>
     </div>
 
-    <!-- Messages Container -->
     <div class="messages-container" id="messagesContainer">
         <div class="empty-state">
-            <i class="fas fa-message"></i>
+            <div class="empty-icon"><i class="fa-regular fa-comments"></i></div>
             <h3>Start a conversation</h3>
-            <p>Send us a message and we'll get back to you shortly</p>
+            <p>Send a message and our team will get back to you shortly.</p>
         </div>
     </div>
 
-    <!-- Input Area -->
     <div class="input-area">
         <div class="input-group">
-            <input 
-                type="text" 
-                class="message-input" 
-                id="messageInput" 
-                placeholder="Type a message..."
+            <input
+                type="text"
+                class="message-input"
+                id="messageInput"
+                placeholder="Message"
                 autocomplete="off"
             >
-            <button class="input-btn secondary" id="imageBtn" title="Send image">
-                <i class="fas fa-image"></i>
+            <button class="input-btn" id="imageBtn" title="Send image">
+                <i class="fa-regular fa-image"></i>
             </button>
         </div>
-        <button class="input-btn" id="sendBtn" title="Send message">
-            <i class="fas fa-paper-plane"></i>
+        <button class="send-btn" id="sendBtn" title="Send message">
+            <i class="fa-solid fa-arrow-up"></i>
         </button>
     </div>
 </div>
@@ -485,13 +399,11 @@ body {
 
 <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 <script>
-    // Initialize app
     const socket = io();
     let deviceId = localStorage.getItem('deviceId') || generateUUID();
     let messageCount = 0;
     let isConnected = false;
 
-    // Request notification permission
     if ('Notification' in window && Notification.permission === 'default') {
         Notification.requestPermission();
     }
@@ -504,63 +416,58 @@ body {
         localStorage.setItem('deviceId', deviceId);
     }
 
-    // Socket Events
     socket.on('connect', () => {
-        console.log('✅ Connected to server');
         isConnected = true;
-        updateStatus('Connected', true);
+        updateStatus('Online', true);
         socket.emit('join', { device_id: deviceId, username: 'User' });
         saveDeviceId();
     });
 
     socket.on('disconnect', () => {
-        console.log('❌ Disconnected from server');
         isConnected = false;
-        updateStatus('Disconnected', false);
+        updateStatus('Offline', false);
     });
 
     socket.on('user_data', (data) => {
         deviceId = data.device_id;
         saveDeviceId();
-        console.log('👤 User data:', data);
+        // Load this device's own conversation history (persists up to 2 days)
+        socket.emit('get_my_messages', { device_id: deviceId });
+    });
+
+    socket.on('my_messages', (data) => {
+        if (data.device_id !== deviceId) return;
+        data.messages.forEach(displayMessage);
     });
 
     socket.on('receive_message', (data) => {
         displayMessage(data);
-        
-        // Show notification for admin messages
+
         if (data.is_admin && Notification.permission === 'granted') {
-            new Notification('Flexia Support', {
+            new Notification('Support', {
                 body: data.message.substring(0, 100),
-                icon: '💬',
-                tag: 'flexia-chat',
+                tag: 'support-chat',
                 requireInteraction: false
             });
         }
     });
 
     socket.on('error', (error) => {
-        console.error('❌ Error:', error);
+        console.error('Error:', error);
         showToast(error.message, 'error');
     });
 
-    socket.on('heartbeat_ack', () => {
-        console.log('💓 Heartbeat acknowledged');
-    });
+    socket.on('heartbeat_ack', () => {});
 
-    // UI Functions
     function updateStatus(text, connected) {
-        const statusEl = document.getElementById('status');
-        const indicator = statusEl.querySelector?.('.status-indicator') || 
-                         document.createElement('div');
-        statusEl.textContent = text;
-        statusEl.className = 'fade-in';
+        document.getElementById('status').textContent = text;
+        const dot = document.getElementById('statusDot');
+        dot.classList.toggle('connected', connected);
     }
 
     function displayMessage(data) {
         const container = document.getElementById('messagesContainer');
-        
-        // Remove empty state
+
         const emptyState = container.querySelector('.empty-state');
         if (emptyState) emptyState.remove();
 
@@ -575,7 +482,6 @@ body {
         } else {
             contentHTML = `<div class="message-content">
                 ${escapeHtml(data.message)}
-                ${data.is_auto_reply ? '<div class="auto-reply-badge">Auto-reply</div>' : ''}
             </div>`;
         }
 
@@ -586,8 +492,7 @@ body {
 
         messageEl.innerHTML = contentHTML + `<div class="message-time">${timeStr}</div>`;
         container.appendChild(messageEl);
-        
-        // Scroll to bottom
+
         container.scrollTop = container.scrollHeight;
         messageCount++;
     }
@@ -600,10 +505,8 @@ body {
 
     function showToast(message, type = 'info') {
         console.log(`[${type.toUpperCase()}] ${message}`);
-        // You can add a toast UI here
     }
 
-    // Event Listeners
     const sendBtn = document.getElementById('sendBtn');
     const messageInput = document.getElementById('messageInput');
     const imageBtn = document.getElementById('imageBtn');
@@ -632,7 +535,6 @@ body {
         });
 
         messageInput.value = '';
-        messageInput.style.height = 'auto';
     }
 
     function handleImageUpload(e) {
@@ -651,21 +553,11 @@ body {
         reader.readAsDataURL(file);
     }
 
-    // Auto-resize textarea
-    messageInput.addEventListener('input', () => {
-        messageInput.style.height = 'auto';
-        messageInput.style.height = Math.min(messageInput.scrollHeight, 100) + 'px';
-    });
-
-    // Heartbeat to keep connection alive
     setInterval(() => {
         if (isConnected) {
             socket.emit('heartbeat', { device_id: deviceId });
         }
     }, 30000);
-
-    // Load messages on startup (optional - commented out as server stores them)
-    console.log('🚀 Chat app initialized');
 </script>
 </body>
 </html>

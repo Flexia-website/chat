@@ -72,13 +72,25 @@ def init_db():
         FOREIGN KEY (device_id) REFERENCES users(device_id) ON DELETE CASCADE
     )''')
     
-    # Auto-reply settings
+    # Auto-reply settings (pool of random first-message replies)
     c.execute('''CREATE TABLE IF NOT EXISTS auto_replies (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         reply_text TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
-    
+
+    # Generic key/value settings (used for the editable 2nd-message replies)
+    c.execute('''CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )''')
+
+    # Seed default 2nd-message replies if not already set
+    c.execute('''INSERT OR IGNORE INTO settings (key, value)
+                 VALUES ('reply_second_image', 'Please wait while I review')''')
+    c.execute('''INSERT OR IGNORE INTO settings (key, value)
+                 VALUES ('reply_second_text', "I'll get back to you soon")''')
+
     # Create indexes
     c.execute('CREATE INDEX IF NOT EXISTS idx_messages_device_id ON messages(device_id)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages(expires_at)')
@@ -101,6 +113,22 @@ def update_user_activity(device_id):
     c = conn.cursor()
     c.execute('UPDATE users SET last_active = ? WHERE device_id = ?', 
               (datetime.now().isoformat(), device_id))
+    conn.commit()
+    conn.close()
+
+def get_setting(key, default=None):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute('SELECT value FROM settings WHERE key = ?', (key,))
+    row = c.fetchone()
+    conn.close()
+    return row['value'] if row else default
+
+def set_setting(key, value):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute('''INSERT INTO settings (key, value) VALUES (?, ?)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value''', (key, value))
     conn.commit()
     conn.close()
 
@@ -193,9 +221,9 @@ def send_auto_reply(device_id, message_type='first'):
     if message_type == 'first':
         reply_text = get_auto_reply()
     elif message_type == 'image':
-        reply_text = "Please wait while I review"
+        reply_text = get_setting('reply_second_image', 'Please wait while I review')
     elif message_type == 'text':
-        reply_text = "I'll get back to you soon"
+        reply_text = get_setting('reply_second_text', "I'll get back to you soon")
     else:
         return None
     
@@ -239,7 +267,7 @@ def index():
         return send_file('index.html')
     except:
         return '''
-        <h1>Flexia Merchant Chat</h1>
+        <h1>Support Chat</h1>
         <p>Chat interface loading...</p>
         '''
 
@@ -273,6 +301,7 @@ def admin_settings():
             if reply_text:
                 c.execute('INSERT INTO auto_replies (reply_text) VALUES (?)', (reply_text,))
                 conn.commit()
+                conn.close()
                 return jsonify({'success': True, 'message': 'Reply added'})
         
         elif action == 'get_replies':
@@ -288,7 +317,31 @@ def admin_settings():
             c.execute('DELETE FROM auto_replies WHERE id = ?', (reply_id,))
             conn.commit()
             return jsonify({'success': True, 'message': 'Reply deleted'})
-        
+
+        elif action == 'get_second_replies':
+            c.execute('SELECT value FROM settings WHERE key = ?', ('reply_second_image',))
+            image_row = c.fetchone()
+            c.execute('SELECT value FROM settings WHERE key = ?', ('reply_second_text',))
+            text_row = c.fetchone()
+            conn.close()
+            return jsonify({
+                'image': image_row['value'] if image_row else 'Please wait while I review',
+                'text': text_row['value'] if text_row else "I'll get back to you soon"
+            })
+
+        elif action == 'set_second_reply':
+            stage = data.get('stage')  # 'image' or 'text'
+            reply_text = (data.get('reply_text') or '').strip()
+            if stage not in ('image', 'text') or not reply_text:
+                conn.close()
+                return jsonify({'success': False, 'message': 'stage (image/text) and reply_text are required'}), 400
+            key = f'reply_second_{stage}'
+            c.execute('''INSERT INTO settings (key, value) VALUES (?, ?)
+                         ON CONFLICT(key) DO UPDATE SET value = excluded.value''', (key, reply_text))
+            conn.commit()
+            conn.close()
+            return jsonify({'success': True, 'message': 'Reply updated'})
+
         conn.close()
     
     return jsonify({'error': 'Invalid request'}), 400
@@ -318,7 +371,13 @@ def handle_disconnect():
     
     if sid in user_rooms:
         del user_rooms[sid]
-    
+
+    # Clean up admin bookkeeping if this was an admin socket
+    if sid in admin_sessions:
+        del admin_sessions[sid]
+    if sid in admin_sockets:
+        admin_sockets.remove(sid)
+
     print(f'❌ Client disconnected: {sid}' + (f' (device: {device_id})' if device_id else ''))
 
 @socketio.on('admin_auth')
@@ -388,6 +447,48 @@ def on_join(data):
     })
     
     print(f'👤 User joined: {device_id} ({username})')
+
+@socketio.on('get_my_messages')
+def handle_get_my_messages(data):
+    """Let a user fetch their own (non-expired) message history when they reopen the app"""
+    device_id = data.get('device_id')
+
+    if not device_id:
+        emit('error', {'message': 'Device ID required'})
+        return
+
+    # A user may only ever request their own history — this event is scoped to
+    # whatever device_id the client itself holds, there is no cross-user lookup here.
+    conn = get_db()
+    c = conn.cursor()
+
+    try:
+        now = datetime.now().isoformat()
+        c.execute('''SELECT * FROM messages 
+                     WHERE device_id = ? 
+                     AND expires_at > ?
+                     ORDER BY timestamp ASC''', (device_id, now))
+
+        messages = []
+        for row in c.fetchall():
+            messages.append({
+                'id': row['id'],
+                'device_id': row['device_id'],
+                'sender': row['sender'],
+                'message': row['message'],
+                'type': row['type'],
+                'is_admin': bool(row['is_admin']),
+                'is_auto_reply': bool(row['is_auto_reply']) if 'is_auto_reply' in row.keys() else False,
+                'timestamp': row['timestamp']
+            })
+
+        emit('my_messages', {'device_id': device_id, 'messages': messages})
+
+    except Exception as e:
+        print(f'❌ Error getting own messages: {e}')
+        emit('error', {'message': 'Failed to load message history'})
+    finally:
+        conn.close()
 
 @socketio.on('send_message')
 def handle_send_message(data):
@@ -591,13 +692,16 @@ def handle_upload_image(data):
 
 @socketio.on('admin_join')
 def handle_admin_join(data=None):
-    """Admin joins the admin room"""
+    """Admin joins the admin room (required to receive live push notifications)"""
     sid = request.sid
+
+    if sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
+        emit('error', {'message': 'Unauthorized - Admin access required'})
+        return
+
     join_room('admin_room')
-    
-    if sid in admin_sessions and admin_sessions[sid].get('authenticated'):
-        print(f'👨‍💼 Admin joined admin room: {sid}')
-        emit('admin_room_joined', {'success': True})
+    print(f'Admin joined admin room: {sid}')
+    emit('admin_room_joined', {'success': True})
 
 @socketio.on('get_all_users')
 def handle_get_all_users(data=None):
