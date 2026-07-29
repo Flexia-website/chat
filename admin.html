@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0">
 <meta name="theme-color" content="#0E1013">
+<link rel="manifest" href="/admin-manifest.json">
+<link rel="apple-touch-icon" href="/static/icons/admin-icon-180.png">
+<link rel="icon" href="/static/icons/admin-icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Admin">
+<meta name="mobile-web-app-capable" content="yes">
 <title>Admin</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -490,6 +497,30 @@ body {
 
 .chat-message-row.auto .chat-message { opacity: 0.65; font-style: italic; }
 
+.typing-row { align-self: flex-start; margin-bottom: 10px; }
+.typing-bubble {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px 15px 15px 15px;
+    padding: 11px 15px;
+    display: inline-flex;
+    gap: 4px;
+    align-items: center;
+}
+.typing-bubble span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-soft);
+    animation: typingBounce 1.2s infinite ease-in-out;
+}
+.typing-bubble span:nth-child(2) { animation-delay: 0.15s; }
+.typing-bubble span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes typingBounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+    30% { transform: translateY(-4px); opacity: 1; }
+}
+
 .chat-message.image { padding: 4px; }
 .chat-message.image img { display: block; max-width: 100%; max-height: 220px; border-radius: 10px; }
 
@@ -855,6 +886,13 @@ body {
 <script>
     const socket = io();
     let selectedUser = null;
+
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/admin-sw.js').catch(() => {});
+        });
+    }
+
     let users = [];
     let autoReplies = [];
     let pendingDeleteReplyId = null;
@@ -1002,6 +1040,30 @@ body {
         `).join('');
     }
 
+    socket.on('typing', (data) => {
+        if (selectedUser && data.device_id === selectedUser.device_id) showTypingBubble();
+    });
+    socket.on('stop_typing', (data) => {
+        if (!data.device_id || (selectedUser && data.device_id === selectedUser.device_id)) hideTypingBubble();
+    });
+
+    function showTypingBubble() {
+        hideTypingBubble();
+        const container = document.getElementById('chatMessages');
+        if (container.querySelector('.no-user-selected')) return;
+        const row = document.createElement('div');
+        row.className = 'chat-message-row user typing-row';
+        row.id = 'adminTypingRow';
+        row.innerHTML = `<div class="typing-bubble"><span></span><span></span><span></span></div>`;
+        container.appendChild(row);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function hideTypingBubble() {
+        const row = document.getElementById('adminTypingRow');
+        if (row) row.remove();
+    }
+
     function selectUser(deviceId) {
         selectedUser = users.find(u => u.device_id === deviceId);
         if (selectedUser) {
@@ -1038,6 +1100,7 @@ body {
     }
 
     function addChatMessage(msg) {
+        hideTypingBubble();
         const container = document.getElementById('chatMessages');
         if (container.querySelector('.no-user-selected')) return;
         container.insertAdjacentHTML('beforeend', renderMessageHTML(msg));
@@ -1160,6 +1223,9 @@ body {
         const message = document.getElementById('replyInput').value.trim();
         if (!message || !selectedUser) return;
 
+        clearTimeout(typingTimeout);
+        socket.emit('admin_stop_typing', { device_id: selectedUser.device_id });
+
         socket.emit('admin_send_message', {
             device_id: selectedUser.device_id,
             message: message
@@ -1174,6 +1240,16 @@ body {
             e.preventDefault();
             sendReply();
         }
+    });
+
+    let typingTimeout = null;
+    document.getElementById('replyInput').addEventListener('input', () => {
+        if (!selectedUser) return;
+        socket.emit('admin_typing', { device_id: selectedUser.device_id });
+        clearTimeout(typingTimeout);
+        typingTimeout = setTimeout(() => {
+            socket.emit('admin_stop_typing', { device_id: selectedUser.device_id });
+        }, 2000);
     });
 
     document.getElementById('adminImageBtn').addEventListener('click', () => {

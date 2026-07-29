@@ -248,9 +248,10 @@ def send_auto_reply(device_id, message_type='first'):
         
         conn.commit()
         
-        # Emit to user
+        # Emit to user and to any admins watching this conversation
         if device_id in user_sockets:
             socketio.emit('receive_message', message_data, room=device_id)
+        socketio.emit('receive_message', message_data, room='admin_room')
         
         return message_data
         
@@ -258,6 +259,15 @@ def send_auto_reply(device_id, message_type='first'):
         print(f"❌ Error sending auto-reply: {e}")
     finally:
         conn.close()
+
+def send_auto_reply_delayed(device_id, message_type='first', delay=3):
+    """Show a 'Support is typing…' indicator, wait, then send the auto-reply"""
+    socketio.emit('typing', {'sender': 'Support'}, room=device_id)
+    socketio.emit('typing', {'sender': 'Support', 'device_id': device_id}, room='admin_room')
+    socketio.sleep(delay)
+    send_auto_reply(device_id, message_type)
+    socketio.emit('stop_typing', {'sender': 'Support'}, room=device_id)
+    socketio.emit('stop_typing', {'sender': 'Support', 'device_id': device_id}, room='admin_room')
 
 # HTTP Routes
 @app.route('/')
@@ -276,12 +286,55 @@ def admin_access(admin_password):
     """Access admin panel with password in URL"""
     if admin_password == app.config['ADMIN_PASSWORD']:
         session['admin_logged_in'] = True
+        session['admin_password'] = admin_password
         session.permanent = True
         try:
             return send_file('admin.html')
         except:
             return 'Admin interface loading...'
     return 'Invalid access link', 401
+
+@app.route('/admin-manifest.json')
+def admin_manifest():
+    """PWA manifest for the admin panel only — the start_url embeds the admin's
+    own access link since there is no fixed /admin route."""
+    if not session.get('admin_logged_in'):
+        return jsonify({'error': 'unauthorized'}), 401
+
+    password = session.get('admin_password', '')
+    manifest = {
+        "name": "Support Admin",
+        "short_name": "Admin",
+        "description": "Manage support conversations",
+        "start_url": f"/{password}",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#0E1013",
+        "theme_color": "#0E1013",
+        "orientation": "portrait-primary",
+        "icons": [
+            {"src": "/static/icons/admin-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": "/static/icons/admin-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable"},
+            {"src": "/static/icons/admin-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+            {"src": "/static/icons/admin-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+        ]
+    }
+    response = jsonify(manifest)
+    response.headers['Content-Type'] = 'application/manifest+json'
+    return response
+
+@app.route('/admin-sw.js')
+def admin_service_worker():
+    """Service worker that only enables PWA installability for the admin panel.
+    It intentionally does not cache anything — this is a live dashboard, and
+    stale cached data would hide new messages."""
+    sw_code = '''
+self.addEventListener('install', () => { self.skipWaiting(); });
+self.addEventListener('activate', (event) => { event.waitUntil(self.clients.claim()); });
+self.addEventListener('fetch', (event) => { event.respondWith(fetch(event.request)); });
+'''
+    response = app.response_class(sw_code, mimetype='application/javascript')
+    return response
 
 @app.route('/admin/settings', methods=['GET', 'POST'])
 def admin_settings():
@@ -540,14 +593,14 @@ def handle_send_message(data):
             socketio.emit('new_user_message', message_data, room='admin_room')
             print(f'🔔 Notification queued for admin devices: {admin_devices}')
         
-        # Send automatic reply if appropriate
+        # Send automatic reply if appropriate (delayed, with a typing indicator)
         if is_first_message:
-            send_auto_reply(device_id, 'first')
+            socketio.start_background_task(send_auto_reply_delayed, device_id, 'first')
         elif user_message_count == 1:  # This is the user's 2nd message
             if msg_type == 'image':
-                send_auto_reply(device_id, 'image')
+                socketio.start_background_task(send_auto_reply_delayed, device_id, 'image')
             else:
-                send_auto_reply(device_id, 'text')
+                socketio.start_background_task(send_auto_reply_delayed, device_id, 'text')
         
         print(f'💬 Message received from {device_id}: {message[:50]}...')
         
@@ -556,6 +609,23 @@ def handle_send_message(data):
         emit('error', {'message': 'Failed to send message'})
     finally:
         conn.close()
+
+@socketio.on('admin_typing')
+def handle_admin_typing(data):
+    """Relay to the visitor that a real admin is typing"""
+    device_id = data.get('device_id')
+    sid = request.sid
+    if not device_id or sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
+        return
+    emit('typing', {'sender': 'Support'}, room=device_id)
+
+@socketio.on('admin_stop_typing')
+def handle_admin_stop_typing(data):
+    device_id = data.get('device_id')
+    sid = request.sid
+    if not device_id or sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
+        return
+    emit('stop_typing', {'sender': 'Support'}, room=device_id)
 
 @socketio.on('admin_send_message')
 def handle_admin_send_message(data):
@@ -599,6 +669,7 @@ def handle_admin_send_message(data):
         }
         
         # Send to user and admin
+        emit('stop_typing', {'sender': 'Support'}, room=device_id)
         emit('receive_message', message_data, room=device_id)
         emit('message_sent', {'device_id': device_id, 'success': True}, room=sid)
         
@@ -676,11 +747,11 @@ def handle_upload_image(data):
         else:
             emit('receive_message', message_data, room=device_id)
             emit('new_user_message', message_data, room='admin_room')
-            # Send auto-reply based on message position
+            # Send auto-reply based on message position (delayed, with a typing indicator)
             if is_first_message:
-                send_auto_reply(device_id, 'first')
+                socketio.start_background_task(send_auto_reply_delayed, device_id, 'first')
             elif is_second_message:
-                send_auto_reply(device_id, 'image')
+                socketio.start_background_task(send_auto_reply_delayed, device_id, 'image')
         
         print(f'📷 Image uploaded (expires: {expires_at})')
         
