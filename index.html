@@ -48,7 +48,7 @@ body {
 /* ===== App Shell ===== */
 .chat-app {
     width: 100%;
-    max-width: 428px;
+    max-width: 380px;
     height: 100dvh;
     background: var(--bone);
     display: flex;
@@ -433,6 +433,17 @@ body {
         Notification.requestPermission();
     }
 
+    function notifySupport(title, options) {
+        if (!('Notification' in window)) return;
+        if (Notification.permission === 'granted') {
+            new Notification(title, options);
+        } else if (Notification.permission === 'default') {
+            Notification.requestPermission().then((perm) => {
+                if (perm === 'granted') new Notification(title, options);
+            });
+        }
+    }
+
     function generateUUID() {
         return 'device-' + Math.random().toString(36).substr(2, 9);
     }
@@ -474,13 +485,13 @@ body {
             if (document.visibilityState !== 'visible') {
                 unreadCount++;
                 updateBadge();
-                if (Notification.permission === 'granted') {
-                    new Notification('Support', {
-                        body: data.message.substring(0, 100),
-                        tag: 'support-chat',
-                        requireInteraction: false
-                    });
-                }
+            }
+            if (Notification.permission === 'granted' || Notification.permission === 'default') {
+                notifySupport('Support', {
+                    body: data.message.substring(0, 100),
+                    tag: 'support-chat-' + Date.now(),
+                    requireInteraction: false
+                });
             }
         }
     });
