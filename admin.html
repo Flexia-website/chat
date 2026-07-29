@@ -292,6 +292,25 @@ body {
     font-weight: 700;
     color: var(--brass);
     flex-shrink: 0;
+    position: relative;
+}
+
+.unread-dot {
+    position: absolute;
+    top: -3px;
+    right: -3px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: var(--danger);
+    color: white;
+    font-size: 9.5px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid var(--panel);
 }
 .user-item.active .user-avatar { background: rgba(255, 255, 255, 0.08); color: var(--brass-bright); }
 
@@ -840,6 +859,7 @@ body {
     let autoReplies = [];
     let pendingDeleteReplyId = null;
     let pendingDeleteUserId = null;
+    let unreadByDevice = {};
     let adminDeviceId = localStorage.getItem('adminDeviceId') || generateAdminDeviceId();
 
     function generateAdminDeviceId() {
@@ -878,15 +898,23 @@ body {
     socket.on('user_messages', (data) => displayChat(data));
 
     socket.on('new_user_message', (data) => {
-        if (selectedUser && selectedUser.device_id === data.device_id) {
+        const isOpenConversation = selectedUser && selectedUser.device_id === data.device_id;
+
+        if (isOpenConversation) {
             addChatMessage(data);
         }
-        if (Notification.permission === 'granted') {
-            new Notification('New message', {
-                body: `${data.sender}: ${data.message.substring(0, 50)}`,
-                tag: 'new-message',
-                requireInteraction: true
-            });
+
+        if (document.visibilityState !== 'visible' || !isOpenConversation) {
+            unreadByDevice[data.device_id] = (unreadByDevice[data.device_id] || 0) + 1;
+            renderUsers();
+
+            if (Notification.permission === 'granted') {
+                new Notification('New message', {
+                    body: `${data.sender}: ${data.message.substring(0, 50)}`,
+                    tag: 'new-message-' + data.device_id,
+                    requireInteraction: true
+                });
+            }
         }
     });
 
@@ -955,7 +983,7 @@ body {
         container.innerHTML = usersList.map(user => `
             <div class="user-item ${selectedUser?.device_id === user.device_id ? 'active' : ''}"
                  onclick="selectUser('${user.device_id}')">
-                <div class="user-avatar">${initials(user.username)}</div>
+                <div class="user-avatar">${initials(user.username)}${unreadByDevice[user.device_id] ? `<span class="unread-dot">${unreadByDevice[user.device_id]}</span>` : ''}</div>
                 <div class="user-info">
                     <div class="user-name">${escapeHtml(user.username || 'Anonymous')}</div>
                     <div class="user-status">
@@ -977,6 +1005,7 @@ body {
     function selectUser(deviceId) {
         selectedUser = users.find(u => u.device_id === deviceId);
         if (selectedUser) {
+            unreadByDevice[deviceId] = 0;
             socket.emit('get_user_messages', { device_id: deviceId });
             document.getElementById('selectedUserName').textContent = selectedUser.username || 'Anonymous';
             const sub = document.getElementById('selectedUserSub');

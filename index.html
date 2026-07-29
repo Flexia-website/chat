@@ -440,17 +440,38 @@ body {
         data.messages.forEach(displayMessage);
     });
 
+    let unreadCount = 0;
+
     socket.on('receive_message', (data) => {
         displayMessage(data);
 
-        if (data.is_admin && Notification.permission === 'granted') {
-            new Notification('Support', {
-                body: data.message.substring(0, 100),
-                tag: 'support-chat',
-                requireInteraction: false
-            });
+        if (data.is_admin) {
+            if (document.visibilityState !== 'visible') {
+                unreadCount++;
+                updateBadge();
+                if (Notification.permission === 'granted') {
+                    new Notification('Support', {
+                        body: data.message.substring(0, 100),
+                        tag: 'support-chat',
+                        requireInteraction: false
+                    });
+                }
+            }
         }
     });
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            unreadCount = 0;
+            updateBadge();
+        }
+    });
+
+    function updateBadge() {
+        const badge = document.getElementById('notificationBadge');
+        document.getElementById('notificationCount').textContent = unreadCount;
+        badge.classList.toggle('active', unreadCount > 0);
+    }
 
     socket.on('error', (error) => {
         console.error('Error:', error);
