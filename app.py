@@ -299,19 +299,34 @@ def admin_access(admin_password):
             return 'Admin interface loading...'
     return 'Invalid access link', 401
 
+@app.route('/admin/launch')
+def admin_launch():
+    """Fixed entry point for the installed PWA. Relies on the existing session
+    cookie (set the first time you open your real /<password> link) so the
+    actual password never has to appear in the manifest."""
+    if session.get('admin_logged_in'):
+        try:
+            return send_file('admin.html')
+        except:
+            return 'Admin interface loading...'
+    return '''
+    <div style="font-family:-apple-system,sans-serif;text-align:center;padding:60px 24px;color:#0E1013;">
+        <h2>Session expired</h2>
+        <p>Please open your original admin access link once to log back in, then relaunch the app.</p>
+    </div>
+    ''', 401
+
 @app.route('/admin-manifest.json')
 def admin_manifest():
-    """PWA manifest for the admin panel only — the start_url embeds the admin's
-    own access link since there is no fixed /admin route."""
-    if not session.get('admin_logged_in'):
-        return jsonify({'error': 'unauthorized'}), 401
-
-    password = session.get('admin_password', '')
+    """PWA manifest for the admin panel only. Kept fully public and static (no
+    auth check, no per-user data) so it always loads reliably — a manifest
+    that 401s breaks installability entirely with no visible error."""
     manifest = {
+        "id": "/admin/launch",
         "name": "Support Admin",
         "short_name": "Admin",
         "description": "Manage support conversations",
-        "start_url": f"/{password}",
+        "start_url": "/admin/launch",
         "scope": "/",
         "display": "standalone",
         "background_color": "#0E1013",

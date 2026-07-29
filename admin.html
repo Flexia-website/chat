@@ -779,6 +779,9 @@ body {
             <div class="status-pill" id="statusBadge">
                 <span class="dot"></span><span>Connecting</span>
             </div>
+            <button class="btn btn-brass btn-sm" id="installBtn" style="display:none;" title="Install app">
+                <i class="fa-solid fa-arrow-down-to-line"></i> Install
+            </button>
             <button class="btn btn-ghost btn-icon" id="settingsBtn" title="Auto-reply settings">
                 <i class="fa-solid fa-sliders"></i>
             </button>
@@ -889,9 +892,35 @@ body {
 
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('/admin-sw.js').catch(() => {});
+            navigator.serviceWorker.register('/admin-sw.js')
+                .then(() => console.log('Service worker registered'))
+                .catch(err => console.warn('Service worker registration failed:', err));
         });
     }
+
+    // Chrome/Edge/Android fire this when install criteria are met — capture it
+    // so we can trigger install from our own button instead of relying on an
+    // automatic banner (which browsers show inconsistently).
+    let deferredInstallPrompt = null;
+    window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredInstallPrompt = e;
+        document.getElementById('installBtn').style.display = 'inline-flex';
+    });
+
+    document.getElementById('installBtn').addEventListener('click', async () => {
+        if (!deferredInstallPrompt) return;
+        deferredInstallPrompt.prompt();
+        const { outcome } = await deferredInstallPrompt.userChoice;
+        console.log('Install prompt outcome:', outcome);
+        deferredInstallPrompt = null;
+        document.getElementById('installBtn').style.display = 'none';
+    });
+
+    window.addEventListener('appinstalled', () => {
+        document.getElementById('installBtn').style.display = 'none';
+        showToast('App installed', 'success');
+    });
 
     let users = [];
     let autoReplies = [];
