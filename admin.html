@@ -939,6 +939,17 @@ body {
         Notification.requestPermission();
     }
 
+    function notifyAdmin(title, options) {
+        if (!('Notification' in window)) return;
+        if (Notification.permission === 'granted') {
+            new Notification(title, options);
+        } else if (Notification.permission === 'default') {
+            Notification.requestPermission().then((perm) => {
+                if (perm === 'granted') new Notification(title, options);
+            });
+        }
+    }
+
     socket.on('connect', () => {
         updateStatus(true);
 
@@ -962,7 +973,14 @@ body {
         document.getElementById('userCount').textContent = users.length;
     });
 
-    socket.on('user_messages', (data) => displayChat(data));
+    socket.on('user_messages', (data) => {
+        displayChat(data);
+        if (selectedUser && selectedUser.device_id === data.device_id) {
+            getOfflineQueue()
+                .filter(item => item.device_id === data.device_id)
+                .forEach(renderPendingReply);
+        }
+    });
 
     socket.on('new_user_message', (data) => {
         const isOpenConversation = selectedUser && selectedUser.device_id === data.device_id;
@@ -974,14 +992,14 @@ body {
         if (document.visibilityState !== 'visible' || !isOpenConversation) {
             unreadByDevice[data.device_id] = (unreadByDevice[data.device_id] || 0) + 1;
             renderUsers();
+        }
 
-            if (Notification.permission === 'granted') {
-                new Notification('New message', {
-                    body: `${data.sender}: ${data.message.substring(0, 50)}`,
-                    tag: 'new-message-' + data.device_id,
-                    requireInteraction: true
-                });
-            }
+        if (Notification.permission === 'granted' || Notification.permission === 'default') {
+            notifyAdmin('New message', {
+                body: `${data.sender}: ${data.message.substring(0, 50)}`,
+                tag: 'new-message-' + data.device_id + '-' + Date.now(),
+                requireInteraction: true
+            });
         }
     });
 
@@ -1020,12 +1038,82 @@ body {
 
     socket.on('admin_room_joined', () => {
         console.log('Joined admin room — live notifications active');
+        flushOfflineQueue();
     });
 
     function updateStatus(connected) {
         const badge = document.getElementById('statusBadge');
         badge.classList.toggle('online', connected);
-        badge.querySelector('span:last-child').textContent = connected ? 'Connected' : 'Disconnected';
+        const queued = getOfflineQueue().length;
+        if (!connected && queued > 0) {
+            badge.querySelector('span:last-child').textContent = `Offline · ${queued} queued`;
+        } else if (!connected) {
+            badge.querySelector('span:last-child').textContent = 'Offline';
+        } else {
+            badge.querySelector('span:last-child').textContent = 'Connected';
+        }
+    }
+
+    // ===== Offline reply queue =====
+    // Lets the installed admin PWA accept replies while offline; they're kept
+    // in localStorage and sent automatically the moment the connection (and
+    // admin session) comes back.
+    const OFFLINE_QUEUE_KEY = 'pendingAdminReplies';
+
+    function getOfflineQueue() {
+        try { return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]'); }
+        catch (e) { return []; }
+    }
+
+    function saveOfflineQueue(queue) {
+        localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+    }
+
+    function queueOfflineReply(deviceId, message) {
+        const queue = getOfflineQueue();
+        const item = {
+            id: 'pending-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+            device_id: deviceId,
+            message: message,
+            timestamp: new Date().toISOString()
+        };
+        queue.push(item);
+        saveOfflineQueue(queue);
+        updateStatus(socket.connected);
+
+        if (selectedUser && selectedUser.device_id === deviceId) {
+            renderPendingReply(item);
+        }
+    }
+
+    function renderPendingReply(item) {
+        const container = document.getElementById('chatMessages');
+        if (container.querySelector('.no-user-selected')) return;
+        const row = document.createElement('div');
+        row.className = 'chat-message-row admin';
+        row.id = item.id;
+        row.style.opacity = '0.6';
+        row.innerHTML = `
+            <div class="chat-message">${escapeHtml(item.message)}</div>
+            <div class="chat-message-time"><i class="fa-regular fa-clock"></i> Queued — will send when back online</div>
+        `;
+        container.appendChild(row);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function flushOfflineQueue() {
+        const queue = getOfflineQueue();
+        if (queue.length === 0 || !socket.connected) return;
+
+        queue.forEach(item => {
+            socket.emit('admin_send_message', { device_id: item.device_id, message: item.message });
+            const el = document.getElementById(item.id);
+            if (el) el.remove();
+        });
+
+        saveOfflineQueue([]);
+        updateStatus(true);
+        showToast(`Sent ${queue.length} queued repl${queue.length === 1 ? 'y' : 'ies'}`, 'success');
     }
 
     function initials(name) {
@@ -1252,15 +1340,21 @@ body {
         const message = document.getElementById('replyInput').value.trim();
         if (!message || !selectedUser) return;
 
+        const deviceId = selectedUser.device_id;
+        document.getElementById('replyInput').value = '';
+
+        if (!socket.connected) {
+            queueOfflineReply(deviceId, message);
+            return;
+        }
+
         clearTimeout(typingTimeout);
-        socket.emit('admin_stop_typing', { device_id: selectedUser.device_id });
+        socket.emit('admin_stop_typing', { device_id: deviceId });
 
         socket.emit('admin_send_message', {
-            device_id: selectedUser.device_id,
+            device_id: deviceId,
             message: message
         });
-
-        document.getElementById('replyInput').value = '';
     }
 
     document.getElementById('sendReplyBtn').addEventListener('click', sendReply);

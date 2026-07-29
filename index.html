@@ -34,44 +34,22 @@ html, body {
 
 body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    background:
-        radial-gradient(120% 100% at 15% 0%, #23262c 0%, var(--ink) 55%),
-        var(--ink);
+    background: var(--ink);
     color: var(--ink);
     -webkit-font-smoothing: antialiased;
-    display: flex;
-    justify-content: center;
-    align-items: center;
     overflow: hidden;
 }
 
 /* ===== App Shell ===== */
 .chat-app {
-    width: 100%;
-    max-width: 380px;
+    width: 100vw;
+    max-width: none;
     height: 100dvh;
     background: var(--bone);
     display: flex;
     flex-direction: column;
     position: relative;
     overflow: hidden;
-}
-
-@media (min-width: 641px) {
-    body { padding: 32px; }
-    .chat-app {
-        height: min(760px, 92dvh);
-        max-height: 92dvh;
-        border-radius: 26px;
-        box-shadow: var(--shadow-lg);
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        animation: riseIn 0.5s var(--ease);
-    }
-}
-
-@keyframes riseIn {
-    from { opacity: 0; transform: translateY(18px) scale(0.99); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* ===== Header ===== */
@@ -374,10 +352,6 @@ body {
 #imageInput { display: none; }
 
 /* ===== Small screens: true full-bleed, no scroll on body ===== */
-@media (max-width: 640px) {
-    body { padding: 0; }
-    .chat-app { max-width: none; width: 100vw; height: 100dvh; }
-}
 </style>
 </head>
 <body>
