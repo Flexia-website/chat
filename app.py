@@ -865,7 +865,7 @@ def handle_get_user_messages(data):
                 'message': row['message'],
                 'type': row['type'],
                 'is_admin': bool(row['is_admin']),
-                'is_auto_reply': bool(row.get('is_auto_reply', False)) if 'is_auto_reply' in row.keys() else False,
+                'is_auto_reply': bool(row['is_auto_reply']) if 'is_auto_reply' in row.keys() else False,
                 'timestamp': row['timestamp']
             })
         
