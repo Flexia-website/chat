@@ -1,5 +1,5 @@
 import os
-from flask import Flask, send_file, jsonify, request, session, redirect, url_for
+from flask import Flask, send_file, send_from_directory, jsonify, request, session, redirect, url_for
 from flask_socketio import SocketIO, emit, join_room
 from flask_cors import CORS
 import sqlite3
@@ -280,6 +280,11 @@ def index():
         <h1>Support Chat</h1>
         <p>Chat interface loading...</p>
         '''
+
+@app.route('/uploads/<filename>')
+def serve_upload(filename):
+    """Serve uploaded chat images"""
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 @app.route('/<admin_password>')
 def admin_access(admin_password):
@@ -668,13 +673,14 @@ def handle_admin_send_message(data):
             'timestamp': timestamp
         }
         
-        # Send to user and admin
+        # Send to user, and to every admin socket (including the sender) so the
+        # reply shows up immediately in whoever's chat panel has it open
         emit('stop_typing', {'sender': 'Support'}, room=device_id)
         emit('receive_message', message_data, room=device_id)
         emit('message_sent', {'device_id': device_id, 'success': True}, room=sid)
         
-        # Notify other admins
-        socketio.emit('admin_message_sent', message_data, room='admin_room', skip_sid=sid)
+        # Notify all admins (sender included) so the message appears without a refresh
+        socketio.emit('admin_message_sent', message_data, room='admin_room')
         
         print(f'📤 Admin sent message to {device_id}')
         
