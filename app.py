@@ -9,8 +9,10 @@ import threading
 import time
 import hashlib
 import random
+import json
 from datetime import datetime, timedelta
 from functools import wraps
+from pywebpush import webpush, WebPushException
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -19,6 +21,19 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 app.config['ADMIN_PASSWORD'] = os.environ.get('ADMIN_PASSWORD', 'flexia123')
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
+
+# VAPID keys for Web Push (background notifications, work even when the admin
+# app is closed). Dev defaults are provided so this runs out of the box, but
+# generate your own for production — see README — and set them as env vars.
+VAPID_PUBLIC_KEY = os.environ.get(
+    'VAPID_PUBLIC_KEY',
+    'BM1-RUgnfm9zRS6Vx1khWAoVC8zOs1naoM-Pl6i3QX6iwDm2lMuXC_R73Bm1FY3gvQyD5UdW_HzhERryVhpKZLM'
+)
+VAPID_PRIVATE_KEY = os.environ.get(
+    'VAPID_PRIVATE_KEY',
+    'x5uL2TLfSJfq1TzMxYA2DsfOB6jijcpb9wrLo-opt8k'
+)
+VAPID_CLAIMS_EMAIL = os.environ.get('VAPID_CLAIMS_EMAIL', 'mailto:admin@example.com')
 
 # File upload configuration
 UPLOAD_FOLDER = 'uploads'
@@ -83,6 +98,17 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
+    )''')
+
+    # Web Push subscriptions for admin devices — lets us send background
+    # notifications even when the admin app/tab is fully closed.
+    c.execute('''CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id TEXT,
+        endpoint TEXT UNIQUE NOT NULL,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
     # Seed default 2nd-message replies if not already set
@@ -260,6 +286,56 @@ def send_auto_reply(device_id, message_type='first'):
     finally:
         conn.close()
 
+def send_push_to_admins(title, body, tag=None, url=None):
+    """Send a real background Web Push notification to every subscribed admin
+    device. Unlike the Socket.IO-based notification, this reaches the device
+    even if the admin app/tab is fully closed. Dead subscriptions (410/404)
+    are pruned automatically."""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute('SELECT id, endpoint, p256dh, auth FROM push_subscriptions')
+    subs = c.fetchall()
+    conn.close()
+
+    if not subs:
+        return
+
+    payload = json.dumps({
+        'title': title,
+        'body': body,
+        'tag': tag or f'msg-{uuid.uuid4()}',
+        'url': url or '/admin/launch'
+    })
+
+    dead_ids = []
+    for sub in subs:
+        subscription_info = {
+            'endpoint': sub['endpoint'],
+            'keys': {'p256dh': sub['p256dh'], 'auth': sub['auth']}
+        }
+        try:
+            webpush(
+                subscription_info=subscription_info,
+                data=payload,
+                vapid_private_key=VAPID_PRIVATE_KEY,
+                vapid_claims={'sub': VAPID_CLAIMS_EMAIL}
+            )
+        except WebPushException as e:
+            status = e.response.status_code if e.response is not None else None
+            print(f'⚠️ Push failed for subscription {sub["id"]}: {e}')
+            if status in (404, 410):
+                dead_ids.append(sub['id'])
+        except Exception as e:
+            print(f'⚠️ Push error for subscription {sub["id"]}: {e}')
+
+    if dead_ids:
+        conn = get_db()
+        c = conn.cursor()
+        c.executemany('DELETE FROM push_subscriptions WHERE id = ?', [(i,) for i in dead_ids])
+        conn.commit()
+        conn.close()
+        print(f'🧹 Pruned {len(dead_ids)} expired push subscription(s)')
+
 def send_auto_reply_delayed(device_id, message_type='first', delay=3):
     """Show a 'Support is typing…' indicator, wait, then send the auto-reply"""
     socketio.emit('typing', {'sender': 'Support'}, room=device_id)
@@ -352,9 +428,103 @@ def admin_service_worker():
 self.addEventListener('install', () => { self.skipWaiting(); });
 self.addEventListener('activate', (event) => { event.waitUntil(self.clients.claim()); });
 self.addEventListener('fetch', (event) => { event.respondWith(fetch(event.request)); });
+
+// Background Web Push — fires even when the admin app/tab is fully closed.
+self.addEventListener('push', (event) => {
+    let payload = { title: 'New message', body: 'You have a new message', tag: 'push', url: '/admin/launch' };
+    try {
+        if (event.data) payload = { ...payload, ...event.data.json() };
+    } catch (e) {
+        if (event.data) payload.body = event.data.text();
+    }
+
+    event.waitUntil(
+        self.registration.showNotification(payload.title, {
+            body: payload.body,
+            tag: payload.tag,
+            data: { url: payload.url },
+            icon: '/static/Icons/admin-icon-192.png',
+            badge: '/static/Icons/admin-icon-192.png',
+            requireInteraction: true
+        })
+    );
+});
+
+// Focus (or open) the admin app when a notification is tapped.
+self.addEventListener('notificationclick', (event) => {
+    event.notification.close();
+    const targetUrl = (event.notification.data && event.notification.data.url) || '/admin/launch';
+
+    event.waitUntil(
+        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+            for (const client of clients) {
+                if ('focus' in client) return client.focus();
+            }
+            if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
+        })
+    );
+});
 '''
     response = app.response_class(sw_code, mimetype='application/javascript')
     return response
+
+@app.route('/admin/vapid-public-key')
+def admin_vapid_public_key():
+    """Public key the client needs to create a push subscription. Safe to
+    expose publicly — it's the whole point of a *public* key."""
+    if not session.get('admin_logged_in'):
+        return 'Unauthorized', 401
+    return jsonify({'publicKey': VAPID_PUBLIC_KEY})
+
+@app.route('/admin/push-subscribe', methods=['POST'])
+def admin_push_subscribe():
+    """Save (or refresh) a browser's push subscription so it can receive
+    background notifications even when the admin app is closed."""
+    if not session.get('admin_logged_in'):
+        return 'Unauthorized', 401
+
+    data = request.get_json() or {}
+    sub = data.get('subscription') or {}
+    device_id = data.get('device_id')
+    endpoint = sub.get('endpoint')
+    keys = sub.get('keys') or {}
+    p256dh = keys.get('p256dh')
+    auth = keys.get('auth')
+
+    if not endpoint or not p256dh or not auth:
+        return jsonify({'success': False, 'message': 'Incomplete subscription'}), 400
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute('''INSERT INTO push_subscriptions (device_id, endpoint, p256dh, auth)
+                 VALUES (?, ?, ?, ?)
+                 ON CONFLICT(endpoint) DO UPDATE SET
+                    device_id = excluded.device_id,
+                    p256dh = excluded.p256dh,
+                    auth = excluded.auth''',
+              (device_id, endpoint, p256dh, auth))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
+
+@app.route('/admin/push-unsubscribe', methods=['POST'])
+def admin_push_unsubscribe():
+    """Remove a push subscription, e.g. when the admin explicitly disables
+    notifications on a device."""
+    if not session.get('admin_logged_in'):
+        return 'Unauthorized', 401
+
+    data = request.get_json() or {}
+    endpoint = data.get('endpoint')
+    if not endpoint:
+        return jsonify({'success': False, 'message': 'Endpoint required'}), 400
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute('DELETE FROM push_subscriptions WHERE endpoint = ?', (endpoint,))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
 
 @app.route('/admin/settings', methods=['GET', 'POST'])
 def admin_settings():
@@ -612,6 +782,14 @@ def handle_send_message(data):
         if admin_devices:  # Only emit if admin devices exist
             socketio.emit('new_user_message', message_data, room='admin_room')
             print(f'🔔 Notification queued for admin devices: {admin_devices}')
+
+        # Background push — reaches admin devices even if the app is closed
+        socketio.start_background_task(
+            send_push_to_admins,
+            'New message',
+            f"{message_data['sender']}: {message[:50]}",
+            f"new-message-{device_id}"
+        )
         
         # Send automatic reply if appropriate (delayed, with a typing indicator)
         if is_first_message:
@@ -768,6 +946,13 @@ def handle_upload_image(data):
         else:
             emit('receive_message', message_data, room=device_id)
             emit('new_user_message', message_data, room='admin_room')
+            # Background push — reaches admin devices even if the app is closed
+            socketio.start_background_task(
+                send_push_to_admins,
+                'New image',
+                f"{message_data['sender']} sent an image",
+                f"new-message-{device_id}"
+            )
             # Send auto-reply based on message position (delayed, with a typing indicator)
             if is_first_message:
                 socketio.start_background_task(send_auto_reply_delayed, device_id, 'first')
