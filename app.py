@@ -333,10 +333,10 @@ def admin_manifest():
         "theme_color": "#0E1013",
         "orientation": "portrait-primary",
         "icons": [
-            {"src": "/static/icons/admin-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
-            {"src": "/static/icons/admin-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable"},
-            {"src": "/static/icons/admin-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
-            {"src": "/static/icons/admin-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+            {"src": "/static/Icons/admin-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": "/static/Icons/admin-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable"},
+            {"src": "/static/Icons/admin-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+            {"src": "/static/Icons/admin-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
         ]
     }
     response = jsonify(manifest)

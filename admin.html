@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0">
 <meta name="theme-color" content="#0E1013">
 <link rel="manifest" href="/admin-manifest.json">
-<link rel="apple-touch-icon" href="/static/icons/admin-icon-180.png">
-<link rel="icon" href="/static/icons/admin-icon-192.png">
+<link rel="apple-touch-icon" href="/static/Icons/admin-icon-180.png">
+<link rel="icon" href="/static/Icons/admin-icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Admin">
@@ -955,14 +955,25 @@ body {
         return id;
     }
 
+    let pendingAuthPassword = null;
+
     socket.on('connect', () => {
         updateStatus(true);
 
-        const urlParts = window.location.pathname.split('/');
-        const adminPassword = urlParts[urlParts.length - 1];
+        const isLaunchRoute = window.location.pathname === '/admin/launch';
+        // /admin/launch has no password in its URL by design (it relies on the
+        // session cookie for the HTTP page load). But the socket-level
+        // admin_auth still needs the real password, so fall back to the one
+        // we cached the first time this admin logged in via /<password>.
+        const adminPassword = isLaunchRoute
+            ? localStorage.getItem('adminPassword')
+            : window.location.pathname.split('/').pop();
 
         if (adminPassword) {
+            pendingAuthPassword = adminPassword;
             socket.emit('admin_auth', { password: adminPassword, device_id: adminDeviceId });
+        } else if (isLaunchRoute) {
+            showToast('Open your original admin link once to enable notifications in the app', 'error');
         }
 
         loadUsers();
@@ -1036,6 +1047,9 @@ body {
             showToast('Authentication failed', 'error');
             setTimeout(() => window.location.href = '/', 2000);
         } else {
+            if (pendingAuthPassword) {
+                localStorage.setItem('adminPassword', pendingAuthPassword);
+            }
             // Join the admin room so live push notifications (new messages, images) work
             socket.emit('admin_join', {});
         }
