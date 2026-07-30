@@ -17,3 +17,12 @@ services:
       - key: ADMIN_PASSWORD
         value: your-admin-password-here
         isFile: false
+      - key: VAPID_PUBLIC_KEY
+        value: generate-your-own-see-readme
+        isFile: false
+      - key: VAPID_PRIVATE_KEY
+        value: generate-your-own-see-readme
+        isFile: false
+      - key: VAPID_CLAIMS_EMAIL
+        value: mailto:you@example.com
+        isFile: false

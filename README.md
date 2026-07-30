@@ -25,6 +25,20 @@ A real-time chat application with user management, image uploads, and admin pane
 4. Add environment variables:
    - `SECRET_KEY`: Generate a random string
    - `ADMIN_PASSWORD`: Your admin password
+   - `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY`: Keypair for background push notifications to the admin app. Dev defaults are baked in so it works out of the box, but generate your own for production:
+     ```bash
+     pip install pywebpush --break-system-packages
+     python3 -c "
+     from py_vapid import Vapid
+     from cryptography.hazmat.primitives import serialization
+     import base64
+     v = Vapid(); v.generate_keys()
+     b64 = lambda d: base64.urlsafe_b64encode(d).rstrip(b'=').decode()
+     print('VAPID_PRIVATE_KEY=', b64(v.private_key.private_numbers().private_value.to_bytes(32, 'big')))
+     print('VAPID_PUBLIC_KEY=', b64(v.public_key.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)))
+     "
+     ```
+   - `VAPID_CLAIMS_EMAIL`: A `mailto:` address for push service contact (optional, defaults to a placeholder)
 5. Add persistent disk for uploads
 6. Deploy!
 
