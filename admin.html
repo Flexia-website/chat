@@ -885,11 +885,10 @@ body {
 
 <input type="file" id="imageInputAdmin" accept="image/*">
 
-<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 <script>
-    const socket = io();
-    let selectedUser = null;
-
+    // PWA + notification bootstrap — deliberately kept independent of
+    // socket.io. If the socket.io CDN is slow/blocked/fails, it must not be
+    // able to take installability or notification permission down with it.
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
             navigator.serviceWorker.register('/admin-sw.js')
@@ -919,21 +918,8 @@ body {
 
     window.addEventListener('appinstalled', () => {
         document.getElementById('installBtn').style.display = 'none';
-        showToast('App installed', 'success');
+        if (typeof showToast === 'function') showToast('App installed', 'success');
     });
-
-    let users = [];
-    let autoReplies = [];
-    let pendingDeleteReplyId = null;
-    let pendingDeleteUserId = null;
-    let unreadByDevice = {};
-    let adminDeviceId = localStorage.getItem('adminDeviceId') || generateAdminDeviceId();
-
-    function generateAdminDeviceId() {
-        const id = 'admin-' + Math.random().toString(36).substr(2, 9);
-        localStorage.setItem('adminDeviceId', id);
-        return id;
-    }
 
     if ('Notification' in window && Notification.permission === 'default') {
         Notification.requestPermission();
@@ -948,6 +934,25 @@ body {
                 if (perm === 'granted') new Notification(title, options);
             });
         }
+    }
+</script>
+
+<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+<script>
+    const socket = io();
+    let selectedUser = null;
+
+    let users = [];
+    let autoReplies = [];
+    let pendingDeleteReplyId = null;
+    let pendingDeleteUserId = null;
+    let unreadByDevice = {};
+    let adminDeviceId = localStorage.getItem('adminDeviceId') || generateAdminDeviceId();
+
+    function generateAdminDeviceId() {
+        const id = 'admin-' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('adminDeviceId', id);
+        return id;
     }
 
     socket.on('connect', () => {
