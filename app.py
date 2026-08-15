@@ -461,7 +461,7 @@ def send_push_to_admins(title, body, tag=None, url=None):
         except WebPushException as e:
             status = e.response.status_code if e.response is not None else None
             print(f'⚠️ Push failed for subscription {sub["id"]}: {e}')
-            if status in (404, 410):
+            if status in (401, 403, 404, 410):
                 dead_ids.append(sub['id'])
         except Exception as e:
             print(f'⚠️ Push error for subscription {sub["id"]}: {e}')
@@ -1140,7 +1140,7 @@ def handle_get_all_users(data=None):
                         MAX(m.timestamp) as last_message
                      FROM users u
                      LEFT JOIN messages m ON u.device_id = m.device_id AND m.expires_at > ?
-                     GROUP BY u.device_id
+                     GROUP BY u.device_id, u.username, u.created_at, u.last_active
                      ORDER BY u.last_active DESC''', (datetime.now().isoformat(),))
         
         users = []
