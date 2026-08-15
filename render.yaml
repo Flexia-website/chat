@@ -26,3 +26,11 @@ services:
       - key: VAPID_CLAIMS_EMAIL
         value: mailto:you@example.com
         isFile: false
+      # Not set by default — the app runs on local SQLite until you add this.
+      # Create a Postgres database on Render, then set this env var (either
+      # paste its connection string, or add a `databases:` block below and
+      # point here with fromDatabase) to switch storage over.
+      # - key: DATABASE_URL
+      #   fromDatabase:
+      #     name: flexia-chat-db
+      #     property: connectionString

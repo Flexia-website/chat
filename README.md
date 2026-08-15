@@ -9,7 +9,7 @@ A real-time chat application with user management, image uploads, and admin pane
 - Image upload support
 - Admin panel for managing conversations
 - Responsive design
-- SQLite database for data persistence
+- PostgreSQL database for data persistence (set `DATABASE_URL`)
 
 ## Deployment on Render
 

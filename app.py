@@ -2,6 +2,8 @@ import os
 from flask import Flask, send_file, send_from_directory, jsonify, request, session, redirect, url_for
 from flask_socketio import SocketIO, emit, join_room
 from flask_cors import CORS
+import psycopg2
+import psycopg2.extras
 import sqlite3
 import base64
 import uuid
@@ -35,6 +37,15 @@ VAPID_PRIVATE_KEY = os.environ.get(
 )
 VAPID_CLAIMS_EMAIL = os.environ.get('VAPID_CLAIMS_EMAIL', 'mailto:admin@example.com')
 
+# PostgreSQL connection string. If DATABASE_URL is set (e.g. on Render, once
+# you attach a Postgres database) the app uses Postgres. If it's unset, it
+# falls back to the original local SQLite file (flexia_chat.db) — nothing
+# changes for you until you set DATABASE_URL. When you're ready to move
+# existing data over, run migrate_to_postgres.py first, then set the env var.
+DATABASE_URL = os.environ.get('DATABASE_URL')
+USE_POSTGRES = bool(DATABASE_URL)
+SQLITE_PATH = 'flexia_chat.db'
+
 # File upload configuration
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -49,90 +60,217 @@ socketio = SocketIO(app,
                    async_mode='eventlet')
 
 # Database setup
+#
+# The rest of this file was originally written against sqlite3 and uses
+# '?' placeholders plus index/key row access (row[0] / row['col']). When
+# running on Postgres, get_db() below returns a thin wrapper around a real
+# psycopg2 connection that: translates '?' -> '%s', returns rows that
+# support both index and key access (DictCursor), and emulates
+# cursor.lastrowid for the 'messages' inserts that rely on it. When running
+# on SQLite (no DATABASE_URL set), it returns a plain sqlite3 connection,
+# unchanged from the original behavior.
+
+class _CursorCompat:
+    def __init__(self, cursor):
+        self._cursor = cursor
+        self.lastrowid = None
+
+    def execute(self, query, params=()):
+        q = query.replace('?', '%s')
+        # sqlite tolerated double-quoted string literals; postgres treats
+        # double quotes as identifiers, so fix the one literal that used them
+        q = q.replace('!= "Support"', "!= 'Support'")
+        needs_id = q.strip().upper().startswith('INSERT INTO MESSAGES') and 'RETURNING' not in q.upper()
+        if needs_id:
+            q = q.rstrip().rstrip(';') + ' RETURNING id'
+        self._cursor.execute(q, params)
+        if needs_id:
+            row = self._cursor.fetchone()
+            self.lastrowid = row['id'] if row else None
+        return self
+
+    def executemany(self, query, seq_of_params):
+        return self._cursor.executemany(query.replace('?', '%s'), seq_of_params)
+
+    def fetchone(self):
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+
+
+class _ConnCompat:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def cursor(self):
+        return _CursorCompat(self._conn.cursor(cursor_factory=psycopg2.extras.DictCursor))
+
+    def commit(self):
+        self._conn.commit()
+
+    def close(self):
+        self._conn.close()
+
+
+def get_db():
+    if USE_POSTGRES:
+        conn = psycopg2.connect(DATABASE_URL)
+        return _ConnCompat(conn)
+    conn = sqlite3.connect(SQLITE_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def init_db():
-    conn = sqlite3.connect('flexia_chat.db')
+    conn = get_db()
     c = conn.cursor()
-    
-    # Users table
-    c.execute('''CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        device_id TEXT UNIQUE NOT NULL,
-        username TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    
-    # Messages table with 2-day expiration
-    c.execute('''CREATE TABLE IF NOT EXISTS messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        device_id TEXT NOT NULL,
-        sender TEXT NOT NULL,
-        message TEXT NOT NULL,
-        type TEXT DEFAULT 'text',
-        is_admin BOOLEAN DEFAULT 0,
-        is_auto_reply BOOLEAN DEFAULT 0,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        expires_at TIMESTAMP DEFAULT (datetime('now', '+2 days')),
-        FOREIGN KEY (device_id) REFERENCES users(device_id) ON DELETE CASCADE
-    )''')
-    
-    # Files table with 2-day expiration
-    c.execute('''CREATE TABLE IF NOT EXISTS uploaded_files (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        device_id TEXT NOT NULL,
-        filename TEXT NOT NULL,
-        filepath TEXT NOT NULL,
-        uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        expires_at TIMESTAMP DEFAULT (datetime('now', '+2 days')),
-        FOREIGN KEY (device_id) REFERENCES users(device_id) ON DELETE CASCADE
-    )''')
-    
-    # Auto-reply settings (pool of random first-message replies)
-    c.execute('''CREATE TABLE IF NOT EXISTS auto_replies (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        reply_text TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
 
-    # Generic key/value settings (used for the editable 2nd-message replies)
-    c.execute('''CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-    )''')
+    if USE_POSTGRES:
+        # Users table
+        c.execute('''CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            device_id TEXT UNIQUE NOT NULL,
+            username TEXT,
+            created_at TEXT DEFAULT (CURRENT_TIMESTAMP)::text,
+            last_active TEXT DEFAULT (CURRENT_TIMESTAMP)::text
+        )''')
 
-    # Web Push subscriptions for admin devices — lets us send background
-    # notifications even when the admin app/tab is fully closed.
-    c.execute('''CREATE TABLE IF NOT EXISTS push_subscriptions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        device_id TEXT,
-        endpoint TEXT UNIQUE NOT NULL,
-        p256dh TEXT NOT NULL,
-        auth TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
+        # Messages table with 2-day expiration
+        c.execute('''CREATE TABLE IF NOT EXISTS messages (
+            id SERIAL PRIMARY KEY,
+            device_id TEXT NOT NULL,
+            sender TEXT NOT NULL,
+            message TEXT NOT NULL,
+            type TEXT DEFAULT 'text',
+            is_admin BOOLEAN DEFAULT FALSE,
+            is_auto_reply BOOLEAN DEFAULT FALSE,
+            timestamp TEXT DEFAULT (CURRENT_TIMESTAMP)::text,
+            expires_at TEXT DEFAULT (CURRENT_TIMESTAMP + INTERVAL '2 days')::text,
+            FOREIGN KEY (device_id) REFERENCES users(device_id) ON DELETE CASCADE
+        )''')
 
-    # Seed default 2nd-message replies if not already set
-    c.execute('''INSERT OR IGNORE INTO settings (key, value)
-                 VALUES ('reply_second_image', 'Please wait while I review')''')
-    c.execute('''INSERT OR IGNORE INTO settings (key, value)
-                 VALUES ('reply_second_text', "I'll get back to you soon")''')
+        # Files table with 2-day expiration
+        c.execute('''CREATE TABLE IF NOT EXISTS uploaded_files (
+            id SERIAL PRIMARY KEY,
+            device_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            filepath TEXT NOT NULL,
+            uploaded_at TEXT DEFAULT (CURRENT_TIMESTAMP)::text,
+            expires_at TEXT DEFAULT (CURRENT_TIMESTAMP + INTERVAL '2 days')::text,
+            FOREIGN KEY (device_id) REFERENCES users(device_id) ON DELETE CASCADE
+        )''')
+
+        # Auto-reply settings (pool of random first-message replies)
+        c.execute('''CREATE TABLE IF NOT EXISTS auto_replies (
+            id SERIAL PRIMARY KEY,
+            reply_text TEXT NOT NULL,
+            created_at TEXT DEFAULT (CURRENT_TIMESTAMP)::text
+        )''')
+
+        # Generic key/value settings (used for the editable 2nd-message replies)
+        c.execute('''CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )''')
+
+        # Web Push subscriptions for admin devices — lets us send background
+        # notifications even when the admin app/tab is fully closed.
+        c.execute('''CREATE TABLE IF NOT EXISTS push_subscriptions (
+            id SERIAL PRIMARY KEY,
+            device_id TEXT,
+            endpoint TEXT UNIQUE NOT NULL,
+            p256dh TEXT NOT NULL,
+            auth TEXT NOT NULL,
+            created_at TEXT DEFAULT (CURRENT_TIMESTAMP)::text
+        )''')
+
+        # Seed default 2nd-message replies if not already set
+        c.execute('''INSERT INTO settings (key, value)
+                     VALUES ('reply_second_image', 'Please wait while I review')
+                     ON CONFLICT (key) DO NOTHING''')
+        c.execute('''INSERT INTO settings (key, value)
+                     VALUES ('reply_second_text', 'I''ll get back to you soon')
+                     ON CONFLICT (key) DO NOTHING''')
+    else:
+        # Users table
+        c.execute('''CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id TEXT UNIQUE NOT NULL,
+            username TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+
+        # Messages table with 2-day expiration
+        c.execute('''CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id TEXT NOT NULL,
+            sender TEXT NOT NULL,
+            message TEXT NOT NULL,
+            type TEXT DEFAULT 'text',
+            is_admin BOOLEAN DEFAULT 0,
+            is_auto_reply BOOLEAN DEFAULT 0,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP DEFAULT (datetime('now', '+2 days')),
+            FOREIGN KEY (device_id) REFERENCES users(device_id) ON DELETE CASCADE
+        )''')
+
+        # Files table with 2-day expiration
+        c.execute('''CREATE TABLE IF NOT EXISTS uploaded_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            filepath TEXT NOT NULL,
+            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP DEFAULT (datetime('now', '+2 days')),
+            FOREIGN KEY (device_id) REFERENCES users(device_id) ON DELETE CASCADE
+        )''')
+
+        # Auto-reply settings (pool of random first-message replies)
+        c.execute('''CREATE TABLE IF NOT EXISTS auto_replies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reply_text TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+
+        # Generic key/value settings (used for the editable 2nd-message replies)
+        c.execute('''CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )''')
+
+        # Web Push subscriptions for admin devices — lets us send background
+        # notifications even when the admin app/tab is fully closed.
+        c.execute('''CREATE TABLE IF NOT EXISTS push_subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id TEXT,
+            endpoint TEXT UNIQUE NOT NULL,
+            p256dh TEXT NOT NULL,
+            auth TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+
+        # Seed default 2nd-message replies if not already set
+        c.execute('''INSERT OR IGNORE INTO settings (key, value)
+                     VALUES ('reply_second_image', 'Please wait while I review')''')
+        c.execute('''INSERT OR IGNORE INTO settings (key, value)
+                     VALUES ('reply_second_text', "I'll get back to you soon")''')
 
     # Create indexes
     c.execute('CREATE INDEX IF NOT EXISTS idx_messages_device_id ON messages(device_id)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages(expires_at)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_files_expires ON uploaded_files(expires_at)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active)')
-    
+
     conn.commit()
     conn.close()
 
 init_db()
-
-# Helper functions
-def get_db():
-    conn = sqlite3.connect('flexia_chat.db')
-    conn.row_factory = sqlite3.Row
-    return conn
 
 def update_user_activity(device_id):
     conn = get_db()
@@ -559,6 +697,7 @@ def admin_settings():
             reply_id = data.get('reply_id')
             c.execute('DELETE FROM auto_replies WHERE id = ?', (reply_id,))
             conn.commit()
+            conn.close()
             return jsonify({'success': True, 'message': 'Reply deleted'})
 
         elif action == 'get_second_replies':
