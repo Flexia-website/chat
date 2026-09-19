@@ -1159,36 +1159,50 @@ def handle_get_all_users(data=None):
     
     try:
         now = datetime.now().isoformat()
-        c.execute('''SELECT 
+        cutoff_48h = (datetime.now() - timedelta(hours=48)).isoformat()
+        
+        # Optimized: only fetch users with messages in last 48 hours
+        c.execute('''SELECT DISTINCT
                         u.device_id,
                         u.username,
                         u.created_at,
-                        u.last_active,
-                        COUNT(CASE WHEN m.expires_at > ? THEN m.id END) as message_count,
-                        MAX(CASE WHEN m.expires_at > ? THEN m.timestamp END) as last_message
+                        u.last_active
                      FROM users u
-                     LEFT JOIN messages m ON u.device_id = m.device_id
-                     GROUP BY u.device_id, u.username, u.created_at, u.last_active
-                     ORDER BY u.last_active DESC''', (now, now))
+                     WHERE u.last_active > ?
+                     ORDER BY u.last_active DESC
+                     LIMIT 500''', (cutoff_48h,))
         
         users = []
         for row in c.fetchall():
+            device_id = row['device_id']
             last_active = datetime.fromisoformat(row['last_active']) if row['last_active'] else datetime.now()
             inactive_hours = (datetime.now() - last_active).total_seconds() / 3600
             
-            is_connected = row['device_id'] in user_sockets and len(user_sockets[row['device_id']]) > 0
+            # Get message count for this user (fast query)
+            c.execute('''SELECT COUNT(*) as count FROM messages 
+                         WHERE device_id = ? AND expires_at > ?''', (device_id, now))
+            msg_count = c.fetchone()['count'] if c.fetchone() else 0
+            
+            # Get last message timestamp (fast query)
+            c.execute('''SELECT timestamp FROM messages 
+                         WHERE device_id = ? AND expires_at > ?
+                         ORDER BY timestamp DESC LIMIT 1''', (device_id, now))
+            last_msg_row = c.fetchone()
+            last_message = last_msg_row['timestamp'] if last_msg_row else None
+            
+            is_connected = device_id in user_sockets and len(user_sockets[device_id]) > 0
             
             users.append({
-                'device_id': row['device_id'],
+                'device_id': device_id,
                 'username': row['username'] or 'Anonymous',
                 'created_at': row['created_at'],
                 'last_active': row['last_active'],
-                'last_message': row['last_message'],
-                'message_count': row['message_count'],
+                'last_message': last_message,
+                'message_count': msg_count,
                 'inactive_hours': round(inactive_hours, 1),
                 'is_active': inactive_hours < 48,
                 'is_connected': is_connected,
-                'connection_count': len(user_sockets.get(row['device_id'], []))
+                'connection_count': len(user_sockets.get(device_id, []))
             })
         
         emit('users_list', {
@@ -1224,10 +1238,13 @@ def handle_get_user_messages(data):
     
     try:
         now = datetime.now().isoformat()
-        c.execute('''SELECT * FROM messages 
+        # Optimized: only fetch id, sender, message, type, timestamp (not full row)
+        c.execute('''SELECT id, device_id, sender, message, type, is_admin, is_auto_reply, timestamp 
+                     FROM messages 
                      WHERE device_id = ? 
                      AND expires_at > ?
-                     ORDER BY timestamp ASC''', (device_id, now))
+                     ORDER BY timestamp ASC
+                     LIMIT 1000''', (device_id, now))
         
         messages = []
         for row in c.fetchall():
