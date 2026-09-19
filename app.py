@@ -1131,17 +1131,18 @@ def handle_get_all_users(data=None):
     c = conn.cursor()
     
     try:
+        now = datetime.now().isoformat()
         c.execute('''SELECT 
                         u.device_id,
                         u.username,
                         u.created_at,
                         u.last_active,
-                        COUNT(m.id) as message_count,
-                        MAX(m.timestamp) as last_message
+                        COUNT(CASE WHEN m.expires_at > ? THEN m.id END) as message_count,
+                        MAX(CASE WHEN m.expires_at > ? THEN m.timestamp END) as last_message
                      FROM users u
-                     LEFT JOIN messages m ON u.device_id = m.device_id AND m.expires_at > ?
+                     LEFT JOIN messages m ON u.device_id = m.device_id
                      GROUP BY u.device_id, u.username, u.created_at, u.last_active
-                     ORDER BY u.last_active DESC''', (datetime.now().isoformat(),))
+                     ORDER BY u.last_active DESC''', (now, now))
         
         users = []
         for row in c.fetchall():
