@@ -1187,7 +1187,7 @@ def handle_get_user_messages(data):
         return
     
     sid = request.sid
-    if sid not in admin_sessions or not admin_sessions[sid]:
+    if sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
         emit('error', {'message': 'Unauthorized - Admin access required'})
         return
     

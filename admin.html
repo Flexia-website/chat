@@ -1021,9 +1021,6 @@ body {
             showToast('Open your original admin link once to enable notifications in the app', 'error');
         }
 
-        loadUsers();
-        loadAutoReplies();
-        loadSecondReplies();
     });
 
     socket.on('disconnect', () => updateStatus(false));
@@ -1103,6 +1100,9 @@ body {
     socket.on('admin_room_joined', () => {
         console.log('Joined admin room — live notifications active');
         flushOfflineQueue();
+        loadUsers();
+        loadAutoReplies();
+        loadSecondReplies();
     });
 
     function updateStatus(connected) {
