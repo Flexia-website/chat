@@ -404,11 +404,12 @@ def send_auto_reply(device_id, message_type='first'):
             'is_auto_reply': True,
             'timestamp': datetime.now().isoformat()
         }
-        
+        expires_at = (datetime.now() + timedelta(days=2)).isoformat()
+
         c.execute('''INSERT INTO messages 
-                     (device_id, sender, message, type, is_admin, is_auto_reply, timestamp)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                  (device_id, 'Support', reply_text, 'text', True, True, message_data['timestamp']))
+                     (device_id, sender, message, type, is_admin, is_auto_reply, timestamp, expires_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                  (device_id, 'Support', reply_text, 'text', True, True, message_data['timestamp'], expires_at))
         
         conn.commit()
         
