@@ -59,6 +59,9 @@ socketio = SocketIO(app,
                    engineio_logger=True,
                    async_mode='eventlet')
 
+# Track connected admin devices for message routing
+admin_devices = []
+
 # Database setup
 #
 # The rest of this file was originally written against sqlite3 and uses
@@ -1133,8 +1136,14 @@ def handle_admin_join(data=None):
         emit('error', {'message': 'Unauthorized - Admin access required'})
         return
 
+    # Register this admin device
+    device_id = admin_sessions[sid].get('device_id', f'admin-{sid}')
+    if device_id and device_id not in admin_devices:
+        admin_devices.append(device_id)
+        print(f'✅ Admin device registered: {device_id}')
+
     join_room('admin_room')
-    print(f'Admin joined admin room: {sid}')
+    print(f'Admin joined admin room: {sid} (active admins: {len(admin_devices)})')
     emit('admin_room_joined', {'success': True})
 
 @socketio.on('get_all_users')
@@ -1314,6 +1323,24 @@ def handle_heartbeat(data):
             'timestamp': datetime.now().isoformat(),
             'status': 'ok'
         })
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Clean up when any connection disconnects"""
+    sid = request.sid
+    
+    # Clean up admin sessions and devices
+    if sid in admin_sessions:
+        device_id = admin_sessions[sid].get('device_id', f'admin-{sid}')
+        if device_id and device_id in admin_devices:
+            admin_devices.remove(device_id)
+            print(f'🔌 Admin device unregistered: {device_id}')
+        del admin_sessions[sid]
+        print(f'Admin disconnected: {sid}')
+    
+    # Clean up user rooms
+    if sid in user_rooms:
+        del user_rooms[sid]
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
