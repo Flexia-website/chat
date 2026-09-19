@@ -1061,6 +1061,20 @@ body {
         }
     });
 
+    socket.on('new_user_joined', (data) => {
+        // Refresh users list when new user joins
+        socket.emit('get_all_users', {});
+        
+        if (Notification.permission === 'granted' || Notification.permission === 'default') {
+            notifyAdmin('New visitor', {
+                body: `${data.username} has started a conversation`,
+                tag: 'new-user-' + data.device_id,
+                requireInteraction: false
+            });
+        }
+        console.log('🆕 New user joined:', data);
+    });
+
     socket.on('receive_message', (data) => {
         if (data.is_admin && selectedUser && selectedUser.device_id === data.device_id) {
             addChatMessage(data);

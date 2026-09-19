@@ -811,8 +811,14 @@ def on_join(data):
     device_id = data.get('device_id')
     username = data.get('username', 'Anonymous')
     
+    # If no device_id provided, generate from client IP
     if not device_id:
-        device_id = str(uuid.uuid4())
+        # Get client IP - works behind proxies
+        client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+        if ',' in client_ip:
+            client_ip = client_ip.split(',')[0].strip()
+        # Hash the IP to create a consistent device_id
+        device_id = 'ip-' + hashlib.sha256(client_ip.encode()).hexdigest()[:16]
     
     sid = request.sid
     join_room(device_id)
@@ -826,6 +832,7 @@ def on_join(data):
     conn = get_db()
     c = conn.cursor()
     
+    is_new_user = False
     c.execute('SELECT id FROM users WHERE device_id = ?', (device_id,))
     if c.fetchone():
         c.execute('UPDATE users SET last_active = ? WHERE device_id = ?',
@@ -833,6 +840,7 @@ def on_join(data):
     else:
         c.execute('INSERT INTO users (device_id, username) VALUES (?, ?)',
                   (device_id, username))
+        is_new_user = True
     
     conn.commit()
     conn.close()
@@ -849,7 +857,16 @@ def on_join(data):
         'is_first_message': message_count == 0
     })
     
-    print(f'👤 User joined: {device_id} ({username})')
+    # Notify admin of new user
+    if is_new_user:
+        socketio.emit('new_user_joined', {
+            'device_id': device_id,
+            'username': username,
+            'timestamp': datetime.now().isoformat()
+        }, room='admin_room')
+        print(f'🆕 New user created: {device_id} ({username})')
+    else:
+        print(f'👤 User rejoined: {device_id} ({username})')
 
 @socketio.on('get_my_messages')
 def handle_get_my_messages(data):
@@ -1159,18 +1176,12 @@ def handle_get_all_users(data=None):
     
     try:
         now = datetime.now().isoformat()
-        cutoff_48h = (datetime.now() - timedelta(hours=48)).isoformat()
         
-        # Optimized: only fetch users with messages in last 48 hours
-        c.execute('''SELECT DISTINCT
-                        u.device_id,
-                        u.username,
-                        u.created_at,
-                        u.last_active
-                     FROM users u
-                     WHERE u.last_active > ?
-                     ORDER BY u.last_active DESC
-                     LIMIT 500''', (cutoff_48h,))
+        # Fetch all users, order by last activity
+        c.execute('''SELECT device_id, username, created_at, last_active
+                     FROM users
+                     ORDER BY last_active DESC
+                     LIMIT 1000''', ())
         
         users = []
         for row in c.fetchall():
@@ -1178,12 +1189,13 @@ def handle_get_all_users(data=None):
             last_active = datetime.fromisoformat(row['last_active']) if row['last_active'] else datetime.now()
             inactive_hours = (datetime.now() - last_active).total_seconds() / 3600
             
-            # Get message count for this user (fast query)
+            # Get message count for this user
             c.execute('''SELECT COUNT(*) as count FROM messages 
                          WHERE device_id = ? AND expires_at > ?''', (device_id, now))
-            msg_count = c.fetchone()['count'] if c.fetchone() else 0
+            msg_row = c.fetchone()
+            msg_count = msg_row['count'] if msg_row else 0
             
-            # Get last message timestamp (fast query)
+            # Get last message timestamp
             c.execute('''SELECT timestamp FROM messages 
                          WHERE device_id = ? AND expires_at > ?
                          ORDER BY timestamp DESC LIMIT 1''', (device_id, now))
@@ -1238,13 +1250,12 @@ def handle_get_user_messages(data):
     
     try:
         now = datetime.now().isoformat()
-        # Optimized: only fetch id, sender, message, type, timestamp (not full row)
+        # Fetch all messages for this user (no limit - they all expire in 2 days anyway)
         c.execute('''SELECT id, device_id, sender, message, type, is_admin, is_auto_reply, timestamp 
                      FROM messages 
                      WHERE device_id = ? 
                      AND expires_at > ?
-                     ORDER BY timestamp ASC
-                     LIMIT 1000''', (device_id, now))
+                     ORDER BY timestamp ASC''', (device_id, now))
         
         messages = []
         for row in c.fetchall():

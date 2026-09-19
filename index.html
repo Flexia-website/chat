@@ -399,7 +399,7 @@ body {
 <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 <script>
     const socket = io();
-    let deviceId = localStorage.getItem('deviceId') || generateUUID();
+    let deviceId = null;
     let messageCount = 0;
     let isConnected = false;
 
@@ -418,19 +418,11 @@ body {
         }
     }
 
-    function generateUUID() {
-        return 'device-' + Math.random().toString(36).substr(2, 9);
-    }
-
-    function saveDeviceId() {
-        localStorage.setItem('deviceId', deviceId);
-    }
-
     socket.on('connect', () => {
         isConnected = true;
         updateStatus('Online', true);
-        socket.emit('join', { device_id: deviceId, username: 'User' });
-        saveDeviceId();
+        // Don't pass device_id - server will detect from IP
+        socket.emit('join', { username: 'User' });
     });
 
     socket.on('disconnect', () => {
@@ -440,7 +432,6 @@ body {
 
     socket.on('user_data', (data) => {
         deviceId = data.device_id;
-        saveDeviceId();
         // Load this device's own conversation history (persists up to 2 days)
         socket.emit('get_my_messages', { device_id: deviceId });
     });
