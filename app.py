@@ -566,7 +566,24 @@ def admin_service_worker():
     sw_code = '''
 self.addEventListener('install', () => { self.skipWaiting(); });
 self.addEventListener('activate', (event) => { event.waitUntil(self.clients.claim()); });
-self.addEventListener('fetch', (event) => { event.respondWith(fetch(event.request)); });
+self.addEventListener('fetch', (event) => {
+    // Never intercept Socket.IO's own traffic (polling handshake or otherwise).
+    // This SW exists only for PWA installability + push notifications — proxying
+    // the live real-time channel through it adds a fragile extra hop in front of
+    // every connect/reconnect attempt for no benefit. Let the browser handle
+    // these requests natively.
+    const url = new URL(event.request.url);
+    if (url.pathname.startsWith('/socket.io/')) return;
+
+    // For everything else, pass through, but don't leave the promise
+    // rejected on a transient network failure — that's what produces the
+    // "Uncaught (in promise) TypeError: Failed to fetch" console spam.
+    // Resolve to a plain error response instead so the failure is still
+    // visible (and still fails) without an unhandled rejection.
+    event.respondWith(
+        fetch(event.request).catch(() => new Response('Network error', { status: 503, statusText: 'Service Unavailable' }))
+    );
+});
 
 // Background Web Push — fires even when the admin app/tab is fully closed.
 self.addEventListener('push', (event) => {
