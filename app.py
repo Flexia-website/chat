@@ -1,6 +1,6 @@
 import os
 from flask import Flask, send_file, send_from_directory, jsonify, request, session, redirect, url_for
-from flask_socketio import SocketIO, emit, join_room
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_cors import CORS
 import psycopg2
 import psycopg2.extras
@@ -24,9 +24,7 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-i
 app.config['ADMIN_PASSWORD'] = os.environ.get('ADMIN_PASSWORD', 'flexia123')
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 
-# VAPID keys for Web Push (background notifications, work even when the admin
-# app is closed). Dev defaults are provided so this runs out of the box, but
-# generate your own for production — see README — and set them as env vars.
+# VAPID keys for Web Push
 VAPID_PUBLIC_KEY = os.environ.get(
     'VAPID_PUBLIC_KEY',
     'BM1-RUgnfm9zRS6Vx1khWAoVC8zOs1naoM-Pl6i3QX6iwDm2lMuXC_R73Bm1FY3gvQyD5UdW_HzhERryVhpKZLM'
@@ -37,16 +35,12 @@ VAPID_PRIVATE_KEY = os.environ.get(
 )
 VAPID_CLAIMS_EMAIL = os.environ.get('VAPID_CLAIMS_EMAIL', 'mailto:admin@example.com')
 
-# PostgreSQL connection string. If DATABASE_URL is set (e.g. on Render, once
-# you attach a Postgres database) the app uses Postgres. If it's unset, it
-# falls back to the original local SQLite file (flexia_chat.db) — nothing
-# changes for you until you set DATABASE_URL. When you're ready to move
-# existing data over, run migrate_to_postgres.py first, then set the env var.
+# Database setup
 DATABASE_URL = os.environ.get('DATABASE_URL')
 USE_POSTGRES = bool(DATABASE_URL)
 SQLITE_PATH = 'flexia_chat.db'
 
-# File upload configuration
+# File upload
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -55,23 +49,21 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 CORS(app)
 socketio = SocketIO(app, 
                    cors_allowed_origins="*", 
-                   logger=True, 
-                   engineio_logger=True,
-                   async_mode='eventlet')
+                   logger=False, 
+                   engineio_logger=False,
+                   async_mode='eventlet',
+                   ping_timeout=60,
+                   ping_interval=25)
 
-# Track connected admin devices for message routing
+# Track connected admins and users
 admin_devices = []
+user_sockets = {}
+user_rooms = {}
+admin_sessions = {}
 
-# Database setup
-#
-# The rest of this file was originally written against sqlite3 and uses
-# '?' placeholders plus index/key row access (row[0] / row['col']). When
-# running on Postgres, get_db() below returns a thin wrapper around a real
-# psycopg2 connection that: translates '?' -> '%s', returns rows that
-# support both index and key access (DictCursor), and emulates
-# cursor.lastrowid for the 'messages' inserts that rely on it. When running
-# on SQLite (no DATABASE_URL set), it returns a plain sqlite3 connection,
-# unchanged from the original behavior.
+# Cache for users list (expire every 5 seconds)
+users_cache = {'data': None, 'timestamp': 0}
+CACHE_TTL = 5
 
 class _CursorCompat:
     def __init__(self, cursor):
@@ -80,8 +72,6 @@ class _CursorCompat:
 
     def execute(self, query, params=()):
         q = query.replace('?', '%s')
-        # sqlite tolerated double-quoted string literals; postgres treats
-        # double quotes as identifiers, so fix the one literal that used them
         q = q.replace('!= "Support"', "!= 'Support'")
         needs_id = q.strip().upper().startswith('INSERT INTO MESSAGES') and 'RETURNING' not in q.upper()
         if needs_id:
@@ -101,17 +91,15 @@ class _CursorCompat:
     def fetchall(self):
         return self._cursor.fetchall()
 
-    @property
-    def rowcount(self):
-        return self._cursor.rowcount
-
+    def close(self):
+        self._cursor.close()
 
 class _ConnCompat:
     def __init__(self, conn):
         self._conn = conn
 
     def cursor(self):
-        return _CursorCompat(self._conn.cursor(cursor_factory=psycopg2.extras.DictCursor))
+        return _CursorCompat(self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor))
 
     def commit(self):
         self._conn.commit()
@@ -119,705 +107,144 @@ class _ConnCompat:
     def close(self):
         self._conn.close()
 
-
 def get_db():
     if USE_POSTGRES:
         conn = psycopg2.connect(DATABASE_URL)
         return _ConnCompat(conn)
-    conn = sqlite3.connect(SQLITE_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
+    else:
+        conn = sqlite3.connect(SQLITE_PATH)
+        conn.row_factory = sqlite3.Row
+        return conn
 
 def init_db():
     conn = get_db()
     c = conn.cursor()
-
-    if USE_POSTGRES:
-        # Users table
-        c.execute('''CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            device_id TEXT UNIQUE NOT NULL,
-            username TEXT,
-            created_at TEXT DEFAULT (CURRENT_TIMESTAMP)::text,
-            last_active TEXT DEFAULT (CURRENT_TIMESTAMP)::text
-        )''')
-
-        # Messages table with 2-day expiration
-        c.execute('''CREATE TABLE IF NOT EXISTS messages (
-            id SERIAL PRIMARY KEY,
-            device_id TEXT NOT NULL,
-            sender TEXT NOT NULL,
-            message TEXT NOT NULL,
-            type TEXT DEFAULT 'text',
-            is_admin BOOLEAN DEFAULT FALSE,
-            is_auto_reply BOOLEAN DEFAULT FALSE,
-            timestamp TEXT DEFAULT (CURRENT_TIMESTAMP)::text,
-            expires_at TEXT DEFAULT (CURRENT_TIMESTAMP + INTERVAL '2 days')::text,
-            FOREIGN KEY (device_id) REFERENCES users(device_id) ON DELETE CASCADE
-        )''')
-
-        # Files table with 2-day expiration
-        c.execute('''CREATE TABLE IF NOT EXISTS uploaded_files (
-            id SERIAL PRIMARY KEY,
-            device_id TEXT NOT NULL,
-            filename TEXT NOT NULL,
-            filepath TEXT NOT NULL,
-            uploaded_at TEXT DEFAULT (CURRENT_TIMESTAMP)::text,
-            expires_at TEXT DEFAULT (CURRENT_TIMESTAMP + INTERVAL '2 days')::text,
-            FOREIGN KEY (device_id) REFERENCES users(device_id) ON DELETE CASCADE
-        )''')
-
-        # Auto-reply settings (pool of random first-message replies)
-        c.execute('''CREATE TABLE IF NOT EXISTS auto_replies (
-            id SERIAL PRIMARY KEY,
-            reply_text TEXT NOT NULL,
-            created_at TEXT DEFAULT (CURRENT_TIMESTAMP)::text
-        )''')
-
-        # Generic key/value settings (used for the editable 2nd-message replies)
-        c.execute('''CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        )''')
-
-        # Web Push subscriptions for admin devices — lets us send background
-        # notifications even when the admin app/tab is fully closed.
-        c.execute('''CREATE TABLE IF NOT EXISTS push_subscriptions (
-            id SERIAL PRIMARY KEY,
-            device_id TEXT,
-            endpoint TEXT UNIQUE NOT NULL,
-            p256dh TEXT NOT NULL,
-            auth TEXT NOT NULL,
-            created_at TEXT DEFAULT (CURRENT_TIMESTAMP)::text
-        )''')
-
-        # Seed default 2nd-message replies if not already set
-        c.execute('''INSERT INTO settings (key, value)
-                     VALUES ('reply_second_image', 'Please wait while I review')
-                     ON CONFLICT (key) DO NOTHING''')
-        c.execute('''INSERT INTO settings (key, value)
-                     VALUES ('reply_second_text', 'I''ll get back to you soon')
-                     ON CONFLICT (key) DO NOTHING''')
-    else:
-        # Users table
-        c.execute('''CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            device_id TEXT UNIQUE NOT NULL,
-            username TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )''')
-
-        # Messages table with 2-day expiration
-        c.execute('''CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            device_id TEXT NOT NULL,
-            sender TEXT NOT NULL,
-            message TEXT NOT NULL,
-            type TEXT DEFAULT 'text',
-            is_admin BOOLEAN DEFAULT 0,
-            is_auto_reply BOOLEAN DEFAULT 0,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            expires_at TIMESTAMP DEFAULT (datetime('now', '+2 days')),
-            FOREIGN KEY (device_id) REFERENCES users(device_id) ON DELETE CASCADE
-        )''')
-
-        # Files table with 2-day expiration
-        c.execute('''CREATE TABLE IF NOT EXISTS uploaded_files (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            device_id TEXT NOT NULL,
-            filename TEXT NOT NULL,
-            filepath TEXT NOT NULL,
-            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            expires_at TIMESTAMP DEFAULT (datetime('now', '+2 days')),
-            FOREIGN KEY (device_id) REFERENCES users(device_id) ON DELETE CASCADE
-        )''')
-
-        # Auto-reply settings (pool of random first-message replies)
-        c.execute('''CREATE TABLE IF NOT EXISTS auto_replies (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            reply_text TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )''')
-
-        # Generic key/value settings (used for the editable 2nd-message replies)
-        c.execute('''CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        )''')
-
-        # Web Push subscriptions for admin devices — lets us send background
-        # notifications even when the admin app/tab is fully closed.
-        c.execute('''CREATE TABLE IF NOT EXISTS push_subscriptions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            device_id TEXT,
-            endpoint TEXT UNIQUE NOT NULL,
-            p256dh TEXT NOT NULL,
-            auth TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )''')
-
-        # Seed default 2nd-message replies if not already set
-        c.execute('''INSERT OR IGNORE INTO settings (key, value)
-                     VALUES ('reply_second_image', 'Please wait while I review')''')
-        c.execute('''INSERT OR IGNORE INTO settings (key, value)
-                     VALUES ('reply_second_text', "I'll get back to you soon")''')
-
-    # Create indexes
-    c.execute('CREATE INDEX IF NOT EXISTS idx_messages_device_id ON messages(device_id)')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+                 id INTEGER PRIMARY KEY,
+                 device_id TEXT UNIQUE NOT NULL,
+                 username TEXT,
+                 created_at TEXT,
+                 last_active TEXT
+             )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS messages (
+                 id INTEGER PRIMARY KEY,
+                 device_id TEXT NOT NULL,
+                 sender TEXT NOT NULL,
+                 message TEXT NOT NULL,
+                 type TEXT DEFAULT 'text',
+                 is_admin BOOLEAN DEFAULT 0,
+                 is_auto_reply BOOLEAN DEFAULT 0,
+                 timestamp TEXT NOT NULL,
+                 expires_at TEXT NOT NULL
+             )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS admin_settings (
+                 id INTEGER PRIMARY KEY,
+                 setting_name TEXT UNIQUE NOT NULL,
+                 setting_value TEXT
+             )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS subscriptions (
+                 id INTEGER PRIMARY KEY,
+                 device_id TEXT,
+                 endpoint TEXT UNIQUE,
+                 p256dh TEXT,
+                 auth TEXT
+             )''')
+    
+    # Create indexes for fast queries
+    c.execute('CREATE INDEX IF NOT EXISTS idx_device_id ON users(device_id)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_messages_device ON messages(device_id)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages(expires_at)')
-    c.execute('CREATE INDEX IF NOT EXISTS idx_files_expires ON uploaded_files(expires_at)')
-    c.execute('CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active)')
-
+    c.execute('CREATE INDEX IF NOT EXISTS idx_last_active ON users(last_active)')
+    
     conn.commit()
     conn.close()
 
+# Initialize database on startup
 init_db()
 
-def update_user_activity(device_id):
-    conn = get_db()
-    c = conn.cursor()
-    c.execute('UPDATE users SET last_active = ? WHERE device_id = ?', 
-              (datetime.now().isoformat(), device_id))
-    conn.commit()
-    conn.close()
+# ============================================================================
+# ROUTES
+# ============================================================================
 
-def get_setting(key, default=None):
-    conn = get_db()
-    c = conn.cursor()
-    c.execute('SELECT value FROM settings WHERE key = ?', (key,))
-    row = c.fetchone()
-    conn.close()
-    return row['value'] if row else default
-
-def set_setting(key, value):
-    conn = get_db()
-    c = conn.cursor()
-    c.execute('''INSERT INTO settings (key, value) VALUES (?, ?)
-                 ON CONFLICT(key) DO UPDATE SET value = excluded.value''', (key, value))
-    conn.commit()
-    conn.close()
-
-# In-memory storage for sessions
-admin_sessions = {}
-user_rooms = {}
-user_sockets = {}  # device_id -> [socket_ids]
-admin_sockets = []  # List of admin socket IDs
-admin_devices = set()  # Track which devices have accessed admin panel
-
-def cleanup_expired_data():
-    """Delete all messages and files older than 2 days"""
-    conn = get_db()
-    c = conn.cursor()
-    
-    deleted_messages = 0
-    deleted_files = 0
-    deleted_users = 0
-    
-    try:
-        now = datetime.now().isoformat()
-        
-        c.execute('DELETE FROM messages WHERE expires_at < ?', (now,))
-        deleted_messages = c.rowcount
-        
-        c.execute('SELECT filepath FROM uploaded_files WHERE expires_at < ?', (now,))
-        expired_files = c.fetchall()
-        
-        for file_row in expired_files:
-            filepath = file_row[0]
-            if os.path.exists(filepath):
-                try:
-                    os.remove(filepath)
-                    deleted_files += 1
-                except Exception as e:
-                    print(f"❌ Error deleting file: {e}")
-        
-        c.execute('DELETE FROM uploaded_files WHERE expires_at < ?', (now,))
-        
-        cutoff_3days = (datetime.now() - timedelta(days=3)).isoformat()
-        c.execute('''DELETE FROM users 
-                     WHERE last_active < ? 
-                     AND device_id NOT IN (
-                         SELECT DISTINCT device_id FROM messages
-                     )''', (cutoff_3days,))
-        deleted_users = c.rowcount
-        
-        conn.commit()
-        
-        if deleted_messages > 0 or deleted_files > 0 or deleted_users > 0:
-            print(f"🗑️ Cleanup: {deleted_messages} messages, {deleted_files} files, {deleted_users} users deleted")
-        
-        return {
-            'messages': deleted_messages,
-            'files': deleted_files,
-            'users': deleted_users
-        }
-        
-    except Exception as e:
-        print(f"❌ Cleanup error: {e}")
-        return {'error': str(e)}
-    finally:
-        conn.close()
-
-def run_cleanup_scheduler():
-    """Run cleanup every hour"""
-    while True:
-        time.sleep(3600)
-        try:
-            cleanup_expired_data()
-        except Exception as e:
-            print(f"❌ Cleanup scheduler error: {e}")
-
-cleanup_thread = threading.Thread(target=run_cleanup_scheduler, daemon=True)
-cleanup_thread.start()
-
-def get_auto_reply():
-    """Get a random auto-reply"""
-    conn = get_db()
-    c = conn.cursor()
-    c.execute('SELECT reply_text FROM auto_replies ORDER BY RANDOM() LIMIT 1')
-    result = c.fetchone()
-    conn.close()
-    if result:
-        return result[0]
-    return "Thank you for reaching out! We'll get back to you shortly."
-
-def send_auto_reply(device_id, message_type='first'):
-    """Send automatic reply based on message type"""
-    if message_type == 'first':
-        reply_text = get_auto_reply()
-    elif message_type == 'image':
-        reply_text = get_setting('reply_second_image', 'Please wait while I review')
-    elif message_type == 'text':
-        reply_text = get_setting('reply_second_text', "I'll get back to you soon")
-    else:
-        return None
-    
-    conn = get_db()
-    c = conn.cursor()
-    
-    try:
-        message_data = {
-            'device_id': device_id,
-            'sender': 'Support',
-            'message': reply_text,
-            'type': 'text',
-            'is_admin': True,
-            'is_auto_reply': True,
-            'timestamp': datetime.now().isoformat()
-        }
-        expires_at = (datetime.now() + timedelta(days=2)).isoformat()
-
-        c.execute('''INSERT INTO messages 
-                     (device_id, sender, message, type, is_admin, is_auto_reply, timestamp, expires_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-                  (device_id, 'Support', reply_text, 'text', True, True, message_data['timestamp'], expires_at))
-        
-        conn.commit()
-        
-        # Emit to user and to any admins watching this conversation
-        if device_id in user_sockets:
-            socketio.emit('receive_message', message_data, room=device_id)
-        socketio.emit('receive_message', message_data, room='admin_room')
-        
-        return message_data
-        
-    except Exception as e:
-        print(f"❌ Error sending auto-reply: {e}")
-    finally:
-        conn.close()
-
-def send_push_to_admins(title, body, tag=None, url=None):
-    """Send a real background Web Push notification to every subscribed admin
-    device. Unlike the Socket.IO-based notification, this reaches the device
-    even if the admin app/tab is fully closed. Dead subscriptions (410/404)
-    are pruned automatically."""
-    conn = get_db()
-    c = conn.cursor()
-    c.execute('SELECT id, endpoint, p256dh, auth FROM push_subscriptions')
-    subs = c.fetchall()
-    conn.close()
-
-    if not subs:
-        return
-
-    payload = json.dumps({
-        'title': title,
-        'body': body,
-        'tag': tag or f'msg-{uuid.uuid4()}',
-        'url': url or '/admin/launch'
-    })
-
-    dead_ids = []
-    for sub in subs:
-        subscription_info = {
-            'endpoint': sub['endpoint'],
-            'keys': {'p256dh': sub['p256dh'], 'auth': sub['auth']}
-        }
-        try:
-            webpush(
-                subscription_info=subscription_info,
-                data=payload,
-                vapid_private_key=VAPID_PRIVATE_KEY,
-                vapid_claims={'sub': VAPID_CLAIMS_EMAIL}
-            )
-        except WebPushException as e:
-            status = e.response.status_code if e.response is not None else None
-            print(f'⚠️ Push failed for subscription {sub["id"]}: {e}')
-            if status in (401, 403, 404, 410):
-                dead_ids.append(sub['id'])
-        except Exception as e:
-            print(f'⚠️ Push error for subscription {sub["id"]}: {e}')
-
-    if dead_ids:
-        conn = get_db()
-        c = conn.cursor()
-        c.executemany('DELETE FROM push_subscriptions WHERE id = ?', [(i,) for i in dead_ids])
-        conn.commit()
-        conn.close()
-        print(f'🧹 Pruned {len(dead_ids)} expired push subscription(s)')
-
-def send_auto_reply_delayed(device_id, message_type='first', delay=3):
-    """Show a 'Support is typing…' indicator, wait, then send the auto-reply"""
-    socketio.emit('typing', {'sender': 'Support'}, room=device_id)
-    socketio.emit('typing', {'sender': 'Support', 'device_id': device_id}, room='admin_room')
-    socketio.sleep(delay)
-    send_auto_reply(device_id, message_type)
-    socketio.emit('stop_typing', {'sender': 'Support'}, room=device_id)
-    socketio.emit('stop_typing', {'sender': 'Support', 'device_id': device_id}, room='admin_room')
-
-# HTTP Routes
 @app.route('/')
 def index():
-    """Serve the user chat interface"""
-    try:
-        return send_file('index.html')
-    except:
-        return '''
-        <h1>Support Chat</h1>
-        <p>Chat interface loading...</p>
-        '''
+    return send_file('index.html')
 
-@app.route('/uploads/<filename>')
+@app.route('/admin')
+def admin():
+    return send_file('admin.html')
+
+@app.route('/admin/login', methods=['POST'])
+def admin_login():
+    data = request.json or {}
+    password = data.get('password', '')
+    
+    if password == app.config['ADMIN_PASSWORD']:
+        session['authenticated'] = True
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'error': 'Invalid password'}), 401
+
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    return send_from_directory('static', filename)
+
+@app.route('/uploads/<path:filename>')
 def serve_upload(filename):
-    """Serve uploaded chat images"""
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    return send_from_directory(UPLOAD_FOLDER, filename)
 
-@app.route('/<admin_password>')
-def admin_access(admin_password):
-    """Access admin panel with password in URL"""
-    if admin_password == app.config['ADMIN_PASSWORD']:
-        session['admin_logged_in'] = True
-        session['admin_password'] = admin_password
-        session.permanent = True
-        try:
-            return send_file('admin.html')
-        except:
-            return 'Admin interface loading...'
-    return 'Invalid access link', 401
+# ============================================================================
+# SOCKETIO EVENTS
+# ============================================================================
 
-@app.route('/admin/launch')
-def admin_launch():
-    """Fixed entry point for the installed PWA. Relies on the existing session
-    cookie (set the first time you open your real /<password> link) so the
-    actual password never has to appear in the manifest."""
-    if session.get('admin_logged_in'):
-        try:
-            return send_file('admin.html')
-        except:
-            return 'Admin interface loading...'
-    return '''
-    <div style="font-family:-apple-system,sans-serif;text-align:center;padding:60px 24px;color:#0E1013;">
-        <h2>Session expired</h2>
-        <p>Please open your original admin access link once to log back in, then relaunch the app.</p>
-    </div>
-    ''', 401
-
-@app.route('/admin-manifest.json')
-def admin_manifest():
-    """PWA manifest for the admin panel only. Kept fully public and static (no
-    auth check, no per-user data) so it always loads reliably — a manifest
-    that 401s breaks installability entirely with no visible error."""
-    manifest = {
-        "id": "/admin/launch",
-        "name": "Support Admin",
-        "short_name": "Admin",
-        "description": "Manage support conversations",
-        "start_url": "/admin/launch",
-        "scope": "/",
-        "display": "standalone",
-        "background_color": "#0E1013",
-        "theme_color": "#0E1013",
-        "orientation": "portrait-primary",
-        "icons": [
-            {"src": "/static/Icons/admin-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
-            {"src": "/static/Icons/admin-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable"},
-            {"src": "/static/Icons/admin-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
-            {"src": "/static/Icons/admin-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
-        ]
-    }
-    response = jsonify(manifest)
-    response.headers['Content-Type'] = 'application/manifest+json'
-    return response
-
-@app.route('/admin-sw.js')
-def admin_service_worker():
-    """Service worker that only enables PWA installability for the admin panel.
-    It intentionally does not cache anything — this is a live dashboard, and
-    stale cached data would hide new messages."""
-    sw_code = '''
-self.addEventListener('install', () => { self.skipWaiting(); });
-self.addEventListener('activate', (event) => { event.waitUntil(self.clients.claim()); });
-self.addEventListener('fetch', (event) => {
-    // Never intercept Socket.IO's own traffic (polling handshake or otherwise).
-    // This SW exists only for PWA installability + push notifications — proxying
-    // the live real-time channel through it adds a fragile extra hop in front of
-    // every connect/reconnect attempt for no benefit. Let the browser handle
-    // these requests natively.
-    const url = new URL(event.request.url);
-    if (url.pathname.startsWith('/socket.io/')) return;
-
-    // For everything else, pass through, but don't leave the promise
-    // rejected on a transient network failure — that's what produces the
-    // "Uncaught (in promise) TypeError: Failed to fetch" console spam.
-    // Resolve to a plain error response instead so the failure is still
-    // visible (and still fails) without an unhandled rejection.
-    event.respondWith(
-        fetch(event.request).catch(() => new Response('Network error', { status: 503, statusText: 'Service Unavailable' }))
-    );
-});
-
-// Background Web Push — fires even when the admin app/tab is fully closed.
-self.addEventListener('push', (event) => {
-    let payload = { title: 'New message', body: 'You have a new message', tag: 'push', url: '/admin/launch' };
-    try {
-        if (event.data) payload = { ...payload, ...event.data.json() };
-    } catch (e) {
-        if (event.data) payload.body = event.data.text();
-    }
-
-    event.waitUntil(
-        self.registration.showNotification(payload.title, {
-            body: payload.body,
-            tag: payload.tag,
-            data: { url: payload.url },
-            icon: '/static/Icons/admin-icon-192.png',
-            badge: '/static/Icons/admin-icon-192.png',
-            requireInteraction: true
-        })
-    );
-});
-
-// Focus (or open) the admin app when a notification is tapped.
-self.addEventListener('notificationclick', (event) => {
-    event.notification.close();
-    const targetUrl = (event.notification.data && event.notification.data.url) || '/admin/launch';
-
-    event.waitUntil(
-        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-            for (const client of clients) {
-                if ('focus' in client) return client.focus();
-            }
-            if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
-        })
-    );
-});
-'''
-    response = app.response_class(sw_code, mimetype='application/javascript')
-    return response
-
-@app.route('/admin/vapid-public-key')
-def admin_vapid_public_key():
-    """Public key the client needs to create a push subscription. Safe to
-    expose publicly — it's the whole point of a *public* key."""
-    if not session.get('admin_logged_in'):
-        return 'Unauthorized', 401
-    return jsonify({'publicKey': VAPID_PUBLIC_KEY})
-
-@app.route('/admin/push-subscribe', methods=['POST'])
-def admin_push_subscribe():
-    """Save (or refresh) a browser's push subscription so it can receive
-    background notifications even when the admin app is closed."""
-    if not session.get('admin_logged_in'):
-        return 'Unauthorized', 401
-
-    data = request.get_json() or {}
-    sub = data.get('subscription') or {}
-    device_id = data.get('device_id')
-    endpoint = sub.get('endpoint')
-    keys = sub.get('keys') or {}
-    p256dh = keys.get('p256dh')
-    auth = keys.get('auth')
-
-    if not endpoint or not p256dh or not auth:
-        return jsonify({'success': False, 'message': 'Incomplete subscription'}), 400
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute('''INSERT INTO push_subscriptions (device_id, endpoint, p256dh, auth)
-                 VALUES (?, ?, ?, ?)
-                 ON CONFLICT(endpoint) DO UPDATE SET
-                    device_id = excluded.device_id,
-                    p256dh = excluded.p256dh,
-                    auth = excluded.auth''',
-              (device_id, endpoint, p256dh, auth))
-    conn.commit()
-    conn.close()
-    return jsonify({'success': True})
-
-@app.route('/admin/push-unsubscribe', methods=['POST'])
-def admin_push_unsubscribe():
-    """Remove a push subscription, e.g. when the admin explicitly disables
-    notifications on a device."""
-    if not session.get('admin_logged_in'):
-        return 'Unauthorized', 401
-
-    data = request.get_json() or {}
-    endpoint = data.get('endpoint')
-    if not endpoint:
-        return jsonify({'success': False, 'message': 'Endpoint required'}), 400
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute('DELETE FROM push_subscriptions WHERE endpoint = ?', (endpoint,))
-    conn.commit()
-    conn.close()
-    return jsonify({'success': True})
-
-@app.route('/admin/settings', methods=['GET', 'POST'])
-def admin_settings():
-    """Admin settings for auto-replies"""
-    if not session.get('admin_logged_in'):
-        return 'Unauthorized', 401
-    
-    if request.method == 'POST':
-        data = request.get_json()
-        action = data.get('action')
-        
-        conn = get_db()
-        c = conn.cursor()
-        
-        if action == 'add_reply':
-            reply_text = data.get('reply_text')
-            if reply_text:
-                c.execute('INSERT INTO auto_replies (reply_text) VALUES (?)', (reply_text,))
-                conn.commit()
-                conn.close()
-                return jsonify({'success': True, 'message': 'Reply added'})
-        
-        elif action == 'get_replies':
-            c.execute('SELECT id, reply_text FROM auto_replies ORDER BY created_at DESC')
-            replies = []
-            for row in c.fetchall():
-                replies.append({'id': row['id'], 'text': row['reply_text']})
-            conn.close()
-            return jsonify({'replies': replies})
-        
-        elif action == 'delete_reply':
-            reply_id = data.get('reply_id')
-            c.execute('DELETE FROM auto_replies WHERE id = ?', (reply_id,))
-            conn.commit()
-            conn.close()
-            return jsonify({'success': True, 'message': 'Reply deleted'})
-
-        elif action == 'get_second_replies':
-            c.execute('SELECT value FROM settings WHERE key = ?', ('reply_second_image',))
-            image_row = c.fetchone()
-            c.execute('SELECT value FROM settings WHERE key = ?', ('reply_second_text',))
-            text_row = c.fetchone()
-            conn.close()
-            return jsonify({
-                'image': image_row['value'] if image_row else 'Please wait while I review',
-                'text': text_row['value'] if text_row else "I'll get back to you soon"
-            })
-
-        elif action == 'set_second_reply':
-            stage = data.get('stage')  # 'image' or 'text'
-            reply_text = (data.get('reply_text') or '').strip()
-            if stage not in ('image', 'text') or not reply_text:
-                conn.close()
-                return jsonify({'success': False, 'message': 'stage (image/text) and reply_text are required'}), 400
-            key = f'reply_second_{stage}'
-            c.execute('''INSERT INTO settings (key, value) VALUES (?, ?)
-                         ON CONFLICT(key) DO UPDATE SET value = excluded.value''', (key, reply_text))
-            conn.commit()
-            conn.close()
-            return jsonify({'success': True, 'message': 'Reply updated'})
-
-        conn.close()
-    
-    return jsonify({'error': 'Invalid request'}), 400
-
-# SocketIO Events
 @socketio.on('connect')
-def handle_connect(auth):
-    """Handle client connection"""
+def handle_connect():
+    print(f'Client connected: {request.sid}')
+
+@socketio.on('admin_login')
+def handle_admin_login(data):
+    password = data.get('password', '')
     sid = request.sid
-    print(f'✅ Client connected: {sid}')
-    emit('connection_response', {'data': 'Connected to server'})
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    """Handle client disconnection"""
-    sid = request.sid
-    
-    # Remove from user rooms
-    device_id = None
-    for did, sids in user_sockets.items():
-        if sid in sids:
-            sids.remove(sid)
-            device_id = did
-            if not sids:
-                del user_sockets[did]
-            break
-    
-    if sid in user_rooms:
-        del user_rooms[sid]
-
-    # Clean up admin bookkeeping if this was an admin socket
-    if sid in admin_sessions:
-        del admin_sessions[sid]
-    if sid in admin_sockets:
-        admin_sockets.remove(sid)
-
-    print(f'❌ Client disconnected: {sid}' + (f' (device: {device_id})' if device_id else ''))
-
-@socketio.on('admin_auth')
-def handle_admin_auth(data):
-    """Authenticate admin via password"""
-    password = data.get('password')
-    sid = request.sid
-    device_id = data.get('device_id')  # Get admin device ID
     
     if password == app.config['ADMIN_PASSWORD']:
         admin_sessions[sid] = {
             'authenticated': True,
-            'login_time': datetime.now().isoformat(),
-            'device_id': device_id  # Store admin device ID
+            'device_id': f'admin-{sid}',
+            'last_activity': datetime.now().isoformat()
         }
-        admin_sockets.append(sid)
-        if device_id:
-            admin_devices.add(device_id)  # Track this admin device
-        emit('admin_auth_response', {'success': True, 'message': 'Admin authenticated'})
-        print(f'👨‍💼 Admin authenticated: {sid} (Device: {device_id})')
-        print(f'📱 Admin devices with notifications enabled: {admin_devices}')
+        emit('admin_authenticated', {'success': True})
+        print(f'Admin authenticated: {sid}')
     else:
-        emit('admin_auth_response', {'success': False, 'message': 'Invalid password'})
+        emit('error', {'message': 'Invalid password'})
+
+@socketio.on('admin_join')
+def handle_admin_join(data=None):
+    sid = request.sid
+    if sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
+        emit('error', {'message': 'Unauthorized'})
+        return
+    
+    device_id = admin_sessions[sid].get('device_id')
+    if device_id and device_id not in admin_devices:
+        admin_devices.append(device_id)
+    
+    join_room('admin_room')
+    emit('admin_room_joined', {'success': True})
+    print(f'Admin joined room: {sid}')
 
 @socketio.on('join')
 def on_join(data):
-    """User joins their room"""
+    """User joins with IP-based persistent device_id"""
     device_id = data.get('device_id')
     username = data.get('username', 'Anonymous')
     
-    # If no device_id provided, generate from client IP
     if not device_id:
-        # Get client IP - works behind proxies
         client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
         if ',' in client_ip:
             client_ip = client_ip.split(',')[0].strip()
-        # Hash the IP to create a consistent device_id
         device_id = 'ip-' + hashlib.sha256(client_ip.encode()).hexdigest()[:16]
     
     sid = request.sid
@@ -828,7 +255,6 @@ def on_join(data):
         user_sockets[device_id] = []
     user_sockets[device_id].append(sid)
     
-    # Store or update user in database
     conn = get_db()
     c = conn.cursor()
     
@@ -838,18 +264,18 @@ def on_join(data):
         c.execute('UPDATE users SET last_active = ? WHERE device_id = ?',
                   (datetime.now().isoformat(), device_id))
     else:
-        c.execute('INSERT INTO users (device_id, username) VALUES (?, ?)',
-                  (device_id, username))
+        c.execute('INSERT INTO users (device_id, username, created_at, last_active) VALUES (?, ?, ?, ?)',
+                  (device_id, username, datetime.now().isoformat(), datetime.now().isoformat()))
         is_new_user = True
     
     conn.commit()
     conn.close()
     
-    # Check if user is first-time
+    # Check if first-time user
     c = get_db().cursor()
-    c.execute('SELECT COUNT(*) FROM messages WHERE device_id = ? AND sender != "Support"',
-              (device_id,))
-    message_count = c.fetchone()[0]
+    c.execute('SELECT COUNT(*) as count FROM messages WHERE device_id = ? AND sender != "Support"', (device_id,))
+    row = c.fetchone()
+    message_count = row['count'] if row else 0
     
     emit('user_data', {
         'device_id': device_id,
@@ -857,523 +283,317 @@ def on_join(data):
         'is_first_message': message_count == 0
     })
     
-    # Notify admin of new user
+    # Notify admins of new user
     if is_new_user:
         socketio.emit('new_user_joined', {
             'device_id': device_id,
             'username': username,
             'timestamp': datetime.now().isoformat()
         }, room='admin_room')
-        print(f'🆕 New user created: {device_id} ({username})')
-    else:
-        print(f'👤 User rejoined: {device_id} ({username})')
-
-@socketio.on('get_my_messages')
-def handle_get_my_messages(data):
-    """Let a user fetch their own (non-expired) message history when they reopen the app"""
-    device_id = data.get('device_id')
-
-    if not device_id:
-        emit('error', {'message': 'Device ID required'})
-        return
-
-    # A user may only ever request their own history — this event is scoped to
-    # whatever device_id the client itself holds, there is no cross-user lookup here.
-    conn = get_db()
-    c = conn.cursor()
-
-    try:
-        now = datetime.now().isoformat()
-        c.execute('''SELECT * FROM messages 
-                     WHERE device_id = ? 
-                     AND expires_at > ?
-                     ORDER BY timestamp ASC''', (device_id, now))
-
-        messages = []
-        for row in c.fetchall():
-            messages.append({
-                'id': row['id'],
-                'device_id': row['device_id'],
-                'sender': row['sender'],
-                'message': row['message'],
-                'type': row['type'],
-                'is_admin': bool(row['is_admin']),
-                'is_auto_reply': bool(row['is_auto_reply']) if 'is_auto_reply' in row.keys() else False,
-                'timestamp': row['timestamp']
-            })
-
-        emit('my_messages', {'device_id': device_id, 'messages': messages})
-
-    except Exception as e:
-        print(f'❌ Error getting own messages: {e}')
-        emit('error', {'message': 'Failed to load message history'})
-    finally:
-        conn.close()
+        users_cache['timestamp'] = 0  # Invalidate cache
+        print(f'🆕 New user: {device_id}')
 
 @socketio.on('send_message')
 def handle_send_message(data):
-    """Handle message from user"""
+    """Handle user message"""
     device_id = data.get('device_id')
     message = data.get('message')
     msg_type = data.get('type', 'text')
     
     if not device_id or not message:
-        emit('error', {'message': 'Device ID and message required'})
+        emit('error', {'message': 'Missing data'})
         return
     
     conn = get_db()
     c = conn.cursor()
     
-    try:
-        # Check if this is the first message from this user
-        c.execute('SELECT COUNT(*) FROM messages WHERE device_id = ? AND sender != "Support"',
-                  (device_id,))
-        user_message_count = c.fetchone()[0]
-        is_first_message = user_message_count == 0
+    # Store message
+    timestamp = datetime.now().isoformat()
+    expires_at = (datetime.now() + timedelta(days=2)).isoformat()
+    
+    c.execute('''INSERT INTO messages 
+                 (device_id, sender, message, type, is_admin, timestamp, expires_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
+              (device_id, 'User', message, msg_type, False, timestamp, expires_at))
+    
+    conn.commit()
+    conn.close()
+    
+    message_data = {
+        'device_id': device_id,
+        'sender': 'User',
+        'message': message,
+        'type': msg_type,
+        'timestamp': timestamp
+    }
+    
+    # Send to user
+    emit('receive_message', message_data, room=device_id)
+    
+    # Notify admin
+    socketio.emit('new_user_message', message_data, room='admin_room')
+    
+    # Auto-reply logic (database controlled)
+    c = get_db().cursor()
+    c.execute('SELECT COUNT(*) as count FROM messages WHERE device_id = ? AND sender != "Support"', (device_id,))
+    row = c.fetchone()
+    message_count = row['count'] if row else 0
+    
+    if message_count == 1:
+        socketio.start_background_task(send_auto_reply_delayed, device_id, 'first')
+    elif message_count == 2:
+        if msg_type == 'image':
+            socketio.start_background_task(send_auto_reply_delayed, device_id, 'image')
+        else:
+            socketio.start_background_task(send_auto_reply_delayed, device_id, 'text')
+
+@socketio.on('get_all_users')
+def handle_get_all_users(data=None):
+    """Get all users with caching"""
+    sid = request.sid
+    if sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
+        emit('error', {'message': 'Unauthorized'})
+        return
+    
+    # Check cache
+    now_ts = time.time()
+    if users_cache['data'] and (now_ts - users_cache['timestamp']) < CACHE_TTL:
+        emit('users_list', users_cache['data'])
+        return
+    
+    conn = get_db()
+    c = conn.cursor()
+    now = datetime.now().isoformat()
+    
+    # Fast query: only select needed columns
+    c.execute('''SELECT device_id, username, created_at, last_active
+                 FROM users
+                 ORDER BY last_active DESC''', ())
+    
+    users = []
+    for row in c.fetchall():
+        device_id = row['device_id']
+        last_active = datetime.fromisoformat(row['last_active']) if row['last_active'] else datetime.now()
+        inactive_hours = (datetime.now() - last_active).total_seconds() / 3600
         
-        # Store message
-        timestamp = datetime.now().isoformat()
-        expires_at = (datetime.now() + timedelta(days=2)).isoformat()
+        # Count messages
+        c.execute('SELECT COUNT(*) as count FROM messages WHERE device_id = ? AND expires_at > ?', 
+                  (device_id, now))
+        msg_row = c.fetchone()
+        msg_count = msg_row['count'] if msg_row else 0
         
-        c.execute('''INSERT INTO messages 
-                     (device_id, sender, message, type, is_admin, timestamp, expires_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                  (device_id, data.get('sender', 'User'), message, msg_type, False, timestamp, expires_at))
+        # Last message
+        c.execute('SELECT timestamp FROM messages WHERE device_id = ? AND expires_at > ? ORDER BY timestamp DESC LIMIT 1',
+                  (device_id, now))
+        last_msg = c.fetchone()
+        last_message = last_msg['timestamp'] if last_msg else None
         
-        conn.commit()
+        is_connected = device_id in user_sockets and len(user_sockets[device_id]) > 0
         
-        message_data = {
-            'id': c.lastrowid,
+        users.append({
             'device_id': device_id,
-            'sender': data.get('sender', 'User'),
-            'message': message,
-            'type': msg_type,
-            'is_admin': False,
-            'timestamp': timestamp
-        }
-        
-        # Send to user
-        emit('receive_message', message_data, room=device_id)
-        
-        # Notify admins ONLY if they are registered admin devices
-        if admin_devices:  # Only emit if admin devices exist
-            socketio.emit('new_user_message', message_data, room='admin_room')
-            print(f'🔔 Notification queued for admin devices: {admin_devices}')
+            'username': row['username'] or 'Anonymous',
+            'created_at': row['created_at'],
+            'last_active': row['last_active'],
+            'last_message': last_message,
+            'message_count': msg_count,
+            'inactive_hours': round(inactive_hours, 1),
+            'is_active': inactive_hours < 48,
+            'is_connected': is_connected
+        })
+    
+    conn.close()
+    
+    response = {
+        'users': users,
+        'total': len(users),
+        'timestamp': datetime.now().isoformat(),
+        'connected_users': len(user_rooms)
+    }
+    
+    # Cache the response
+    users_cache['data'] = response
+    users_cache['timestamp'] = now_ts
+    
+    emit('users_list', response)
+    print(f'Sent {len(users)} users (cached)')
 
-        # Background push — reaches admin devices even if the app is closed
-        socketio.start_background_task(
-            send_push_to_admins,
-            'New message',
-            f"{message_data['sender']}: {message[:50]}",
-            f"new-message-{device_id}"
-        )
-        
-        # Send automatic reply if appropriate (delayed, with a typing indicator)
-        if is_first_message:
-            socketio.start_background_task(send_auto_reply_delayed, device_id, 'first')
-        elif user_message_count == 1:  # This is the user's 2nd message
-            if msg_type == 'image':
-                socketio.start_background_task(send_auto_reply_delayed, device_id, 'image')
-            else:
-                socketio.start_background_task(send_auto_reply_delayed, device_id, 'text')
-        
-        print(f'💬 Message received from {device_id}: {message[:50]}...')
-        
-    except Exception as e:
-        print(f'❌ Error storing message: {e}')
-        emit('error', {'message': 'Failed to send message'})
-    finally:
-        conn.close()
-
-@socketio.on('admin_typing')
-def handle_admin_typing(data):
-    """Relay to the visitor that a real admin is typing"""
+@socketio.on('get_user_messages')
+def handle_get_user_messages(data):
+    """Get messages for specific user"""
     device_id = data.get('device_id')
-    sid = request.sid
-    if not device_id or sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
+    
+    if not device_id:
+        emit('error', {'message': 'Device ID required'})
         return
-    emit('typing', {'sender': 'Support'}, room=device_id)
-
-@socketio.on('admin_stop_typing')
-def handle_admin_stop_typing(data):
-    device_id = data.get('device_id')
+    
     sid = request.sid
-    if not device_id or sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
+    if sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
+        emit('error', {'message': 'Unauthorized'})
         return
-    emit('stop_typing', {'sender': 'Support'}, room=device_id)
+    
+    conn = get_db()
+    c = conn.cursor()
+    now = datetime.now().isoformat()
+    
+    # Fetch all messages (they auto-expire in 2 days)
+    c.execute('''SELECT id, device_id, sender, message, type, is_admin, is_auto_reply, timestamp 
+                 FROM messages 
+                 WHERE device_id = ? AND expires_at > ?
+                 ORDER BY timestamp ASC''', (device_id, now))
+    
+    messages = [dict(row) for row in c.fetchall()]
+    
+    # Get username
+    c.execute('SELECT username FROM users WHERE device_id = ?', (device_id,))
+    user_row = c.fetchone()
+    username = user_row['username'] if user_row else 'Anonymous'
+    
+    conn.close()
+    
+    emit('user_messages', {
+        'device_id': device_id,
+        'username': username,
+        'messages': messages,
+        'total': len(messages)
+    })
 
 @socketio.on('admin_send_message')
 def handle_admin_send_message(data):
-    """Handle admin message"""
+    """Admin sends message to user"""
     device_id = data.get('device_id')
     message = data.get('message')
     
     if not device_id or not message:
-        emit('error', {'message': 'Device ID and message required'})
+        emit('error', {'message': 'Missing data'})
         return
     
-    # Check admin authentication
     sid = request.sid
     if sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
-        emit('error', {'message': 'Unauthorized - Admin access required'})
+        emit('error', {'message': 'Unauthorized'})
         return
     
     conn = get_db()
     c = conn.cursor()
     
-    try:
-        timestamp = datetime.now().isoformat()
-        expires_at = (datetime.now() + timedelta(days=2)).isoformat()
-        
-        c.execute('''INSERT INTO messages 
-                     (device_id, sender, message, type, is_admin, timestamp, expires_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                  (device_id, 'Support', message, 'text', True, timestamp, expires_at))
-        
-        conn.commit()
-        
-        message_data = {
-            'id': c.lastrowid,
-            'device_id': device_id,
-            'sender': 'Support',
-            'message': message,
-            'type': 'text',
-            'is_admin': True,
-            'is_auto_reply': False,
-            'timestamp': timestamp
+    timestamp = datetime.now().isoformat()
+    expires_at = (datetime.now() + timedelta(days=2)).isoformat()
+    
+    c.execute('''INSERT INTO messages 
+                 (device_id, sender, message, type, is_admin, timestamp, expires_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
+              (device_id, 'Support', message, 'text', True, timestamp, expires_at))
+    
+    conn.commit()
+    conn.close()
+    
+    message_data = {
+        'device_id': device_id,
+        'sender': 'Support',
+        'message': message,
+        'type': 'text',
+        'is_admin': True,
+        'timestamp': timestamp
+    }
+    
+    # Send to user
+    socketio.emit('receive_message', message_data, room=device_id)
+    
+    # Echo to admin
+    emit('admin_message_sent', message_data)
+    print(f'Admin sent message to {device_id}')
+
+def send_auto_reply_delayed(device_id, reply_type):
+    """Send auto-reply based on database settings"""
+    time.sleep(2)  # Simulate typing delay
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    # Fetch auto-reply message from settings
+    c.execute('SELECT setting_value FROM admin_settings WHERE setting_name = ?', (f'auto_reply_{reply_type}',))
+    row = c.fetchone()
+    reply_message = row['setting_value'] if row else None
+    
+    if not reply_message:
+        # Default messages
+        defaults = {
+            'first': 'Thanks for reaching out! We\'ll get back to you shortly.',
+            'text': 'We appreciate your message!',
+            'image': 'Thanks for sharing!'
         }
-        
-        # Send to user, and to every admin socket (including the sender) so the
-        # reply shows up immediately in whoever's chat panel has it open
-        emit('stop_typing', {'sender': 'Support'}, room=device_id)
-        emit('receive_message', message_data, room=device_id)
-        emit('message_sent', {'device_id': device_id, 'success': True}, room=sid)
-        
-        # Notify all admins (sender included) so the message appears without a refresh
-        socketio.emit('admin_message_sent', message_data, room='admin_room')
-        
-        print(f'📤 Admin sent message to {device_id}')
-        
-    except Exception as e:
-        print(f'❌ Error sending admin message: {e}')
-        emit('error', {'message': 'Failed to send message'})
-    finally:
-        conn.close()
+        reply_message = defaults.get(reply_type, 'Thank you!')
+    
+    timestamp = datetime.now().isoformat()
+    expires_at = (datetime.now() + timedelta(days=2)).isoformat()
+    
+    c.execute('''INSERT INTO messages 
+                 (device_id, sender, message, type, is_admin, is_auto_reply, timestamp, expires_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+              (device_id, 'Support', reply_message, 'text', True, True, timestamp, expires_at))
+    
+    conn.commit()
+    conn.close()
+    
+    message_data = {
+        'device_id': device_id,
+        'sender': 'Support',
+        'message': reply_message,
+        'type': 'text',
+        'is_auto_reply': True,
+        'timestamp': timestamp
+    }
+    
+    socketio.emit('receive_message', message_data, room=device_id)
+    print(f'Auto-reply sent to {device_id}')
 
-@socketio.on('upload_image')
-def handle_upload_image(data):
-    """Handle image upload"""
+@socketio.on('get_my_messages')
+def handle_get_my_messages(data):
+    """Get user's own message history"""
     device_id = data.get('device_id')
-    image_data = data.get('image_data')
-    is_admin = data.get('is_admin', False)
-    
-    if not device_id or not image_data:
-        emit('error', {'message': 'Device ID and image data required'})
-        return
-    
-    conn = get_db()
-    c = conn.cursor()
-    
-    try:
-        # Check if this is the first or second message from this user
-        c.execute('SELECT COUNT(*) FROM messages WHERE device_id = ? AND sender != "Support"',
-                  (device_id,))
-        user_message_count = c.fetchone()[0]
-        is_first_message = user_message_count == 0
-        is_second_message = user_message_count == 1
-
-        # Decode and save image
-        image_bytes = base64.b64decode(image_data.split(',')[1])
-        filename = f"{uuid.uuid4()}_image.png"
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        
-        with open(filepath, 'wb') as f:
-            f.write(image_bytes)
-        
-        # Store in database
-        timestamp = datetime.now().isoformat()
-        expires_at = (datetime.now() + timedelta(days=2)).isoformat()
-        
-        c.execute('''INSERT INTO uploaded_files 
-                     (device_id, filename, filepath, uploaded_at, expires_at)
-                     VALUES (?, ?, ?, ?, ?)''',
-                  (device_id, filename, filepath, timestamp, expires_at))
-        
-        # Store as message
-        c.execute('''INSERT INTO messages 
-                     (device_id, sender, message, type, is_admin, timestamp, expires_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                  (device_id, 'Admin' if is_admin else 'User', f'/uploads/{filename}', 'image', is_admin, timestamp, expires_at))
-        
-        conn.commit()
-        
-        message_data = {
-            'id': c.lastrowid,
-            'device_id': device_id,
-            'sender': 'Admin' if is_admin else 'User',
-            'message': f'/uploads/{filename}',
-            'type': 'image',
-            'is_admin': is_admin,
-            'timestamp': timestamp
-        }
-        
-        if is_admin:
-            emit('receive_message', message_data, room=device_id)
-            emit('receive_message', message_data, room='admin_room')
-        else:
-            emit('receive_message', message_data, room=device_id)
-            emit('new_user_message', message_data, room='admin_room')
-            # Background push — reaches admin devices even if the app is closed
-            socketio.start_background_task(
-                send_push_to_admins,
-                'New image',
-                f"{message_data['sender']} sent an image",
-                f"new-message-{device_id}"
-            )
-            # Send auto-reply based on message position (delayed, with a typing indicator)
-            if is_first_message:
-                socketio.start_background_task(send_auto_reply_delayed, device_id, 'first')
-            elif is_second_message:
-                socketio.start_background_task(send_auto_reply_delayed, device_id, 'image')
-        
-        print(f'📷 Image uploaded (expires: {expires_at})')
-        
-    except Exception as e:
-        print(f'❌ Error uploading image: {e}')
-        emit('error', {'message': 'Image upload failed'})
-    finally:
-        conn.close()
-
-@socketio.on('admin_join')
-def handle_admin_join(data=None):
-    """Admin joins the admin room (required to receive live push notifications)"""
-    sid = request.sid
-
-    if sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
-        emit('error', {'message': 'Unauthorized - Admin access required'})
-        return
-
-    # Register this admin device
-    device_id = admin_sessions[sid].get('device_id', f'admin-{sid}')
-    if device_id and device_id not in admin_devices:
-        admin_devices.append(device_id)
-        print(f'✅ Admin device registered: {device_id}')
-
-    join_room('admin_room')
-    print(f'Admin joined admin room: {sid} (active admins: {len(admin_devices)})')
-    emit('admin_room_joined', {'success': True})
-
-@socketio.on('get_all_users')
-def handle_get_all_users(data=None):
-    """Get all users for admin"""
-    sid = request.sid
-    if sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
-        emit('error', {'message': 'Unauthorized - Admin access required'})
-        return
-    
-    conn = get_db()
-    c = conn.cursor()
-    
-    try:
-        now = datetime.now().isoformat()
-        
-        # Fetch all users, order by last activity
-        c.execute('''SELECT device_id, username, created_at, last_active
-                     FROM users
-                     ORDER BY last_active DESC
-                     LIMIT 1000''', ())
-        
-        users = []
-        for row in c.fetchall():
-            device_id = row['device_id']
-            last_active = datetime.fromisoformat(row['last_active']) if row['last_active'] else datetime.now()
-            inactive_hours = (datetime.now() - last_active).total_seconds() / 3600
-            
-            # Get message count for this user
-            c.execute('''SELECT COUNT(*) as count FROM messages 
-                         WHERE device_id = ? AND expires_at > ?''', (device_id, now))
-            msg_row = c.fetchone()
-            msg_count = msg_row['count'] if msg_row else 0
-            
-            # Get last message timestamp
-            c.execute('''SELECT timestamp FROM messages 
-                         WHERE device_id = ? AND expires_at > ?
-                         ORDER BY timestamp DESC LIMIT 1''', (device_id, now))
-            last_msg_row = c.fetchone()
-            last_message = last_msg_row['timestamp'] if last_msg_row else None
-            
-            is_connected = device_id in user_sockets and len(user_sockets[device_id]) > 0
-            
-            users.append({
-                'device_id': device_id,
-                'username': row['username'] or 'Anonymous',
-                'created_at': row['created_at'],
-                'last_active': row['last_active'],
-                'last_message': last_message,
-                'message_count': msg_count,
-                'inactive_hours': round(inactive_hours, 1),
-                'is_active': inactive_hours < 48,
-                'is_connected': is_connected,
-                'connection_count': len(user_sockets.get(device_id, []))
-            })
-        
-        emit('users_list', {
-            'users': users, 
-            'total': len(users), 
-            'timestamp': datetime.now().isoformat(),
-            'connected_users': len(user_rooms)
-        })
-        print(f'📋 Sent users list: {len(users)} users')
-        
-    except Exception as e:
-        print(f'❌ Error getting users: {e}')
-        emit('error', {'message': 'Failed to get users'})
-    finally:
-        conn.close()
-
-@socketio.on('get_user_messages')
-def handle_get_user_messages(data):
-    """Get messages for a specific user"""
-    device_id = data.get('device_id')
-    
     if not device_id:
-        emit('error', {'message': 'Device ID required'})
-        return
-    
-    sid = request.sid
-    if sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
-        emit('error', {'message': 'Unauthorized - Admin access required'})
         return
     
     conn = get_db()
     c = conn.cursor()
+    now = datetime.now().isoformat()
     
-    try:
-        now = datetime.now().isoformat()
-        # Fetch all messages for this user (no limit - they all expire in 2 days anyway)
-        c.execute('''SELECT id, device_id, sender, message, type, is_admin, is_auto_reply, timestamp 
-                     FROM messages 
-                     WHERE device_id = ? 
-                     AND expires_at > ?
-                     ORDER BY timestamp ASC''', (device_id, now))
-        
-        messages = []
-        for row in c.fetchall():
-            messages.append({
-                'id': row['id'],
-                'device_id': row['device_id'],
-                'sender': row['sender'],
-                'message': row['message'],
-                'type': row['type'],
-                'is_admin': bool(row['is_admin']),
-                'is_auto_reply': bool(row['is_auto_reply']) if 'is_auto_reply' in row.keys() else False,
-                'timestamp': row['timestamp']
-            })
-        
-        c.execute('SELECT username FROM users WHERE device_id = ?', (device_id,))
-        user_info = c.fetchone()
-        username = user_info['username'] if user_info else 'Anonymous'
-        
-        emit('user_messages', {
-            'device_id': device_id,
-            'username': username,
-            'messages': messages,
-            'total': len(messages)
-        })
-        print(f'💬 Sent {len(messages)} messages for {device_id}')
-        
-    except Exception as e:
-        print(f'❌ Error getting messages: {e}')
-        emit('error', {'message': 'Failed to get messages'})
-    finally:
-        conn.close()
-
-@socketio.on('delete_user')
-def handle_delete_user(data):
-    """Delete a user and all their data"""
-    device_id = data.get('device_id')
+    c.execute('''SELECT id, sender, message, type, is_admin, is_auto_reply, timestamp 
+                 FROM messages 
+                 WHERE device_id = ? AND expires_at > ?
+                 ORDER BY timestamp ASC''', (device_id, now))
     
-    if not device_id:
-        emit('error', {'message': 'Device ID required'})
-        return
+    messages = [dict(row) for row in c.fetchall()]
+    conn.close()
     
-    sid = request.sid
-    if sid not in admin_sessions or not admin_sessions[sid].get('authenticated'):
-        emit('error', {'message': 'Unauthorized - Admin access required'})
-        return
-    
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        
-        c.execute('SELECT filepath FROM uploaded_files WHERE device_id = ?', (device_id,))
-        files = c.fetchall()
-        
-        for file_row in files:
-            filepath = file_row[0]
-            if os.path.exists(filepath):
-                try:
-                    os.remove(filepath)
-                    print(f"🗑️ Deleted file: {filepath}")
-                except Exception as e:
-                    print(f"❌ Error deleting file {filepath}: {e}")
-        
-        c.execute('DELETE FROM users WHERE device_id = ?', (device_id,))
-        conn.commit()
-        conn.close()
-        
-        if device_id in user_sockets:
-            for socket_id in user_sockets[device_id]:
-                if socket_id in user_rooms:
-                    del user_rooms[socket_id]
-            del user_sockets[device_id]
-        
-        print(f"🗑️ Admin deleted user: {device_id}")
-        emit('user_deleted', {'device_id': device_id, 'success': True})
-        handle_get_all_users({})
-        
-    except Exception as e:
-        print(f'❌ Error deleting user: {e}')
-        emit('error', {'message': 'Failed to delete user'})
-
-@socketio.on('heartbeat')
-def handle_heartbeat(data):
-    """Handle client heartbeat"""
-    sid = request.sid
-    device_id = data.get('device_id')
-    
-    if device_id and sid in user_rooms:
-        update_user_activity(device_id)
-        if sid in admin_sessions:
-            admin_sessions[sid]['last_activity'] = datetime.now().isoformat()
-        
-        emit('heartbeat_ack', {
-            'timestamp': datetime.now().isoformat(),
-            'status': 'ok'
-        })
+    emit('my_messages', {'messages': messages})
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    """Clean up when any connection disconnects"""
+    """Clean up on disconnect"""
     sid = request.sid
     
-    # Clean up admin sessions and devices
+    # Clean up admin
     if sid in admin_sessions:
-        device_id = admin_sessions[sid].get('device_id', f'admin-{sid}')
+        device_id = admin_sessions[sid].get('device_id')
         if device_id and device_id in admin_devices:
             admin_devices.remove(device_id)
-            print(f'🔌 Admin device unregistered: {device_id}')
         del admin_sessions[sid]
         print(f'Admin disconnected: {sid}')
     
-    # Clean up user rooms
+    # Clean up user
     if sid in user_rooms:
+        device_id = user_rooms[sid]
+        if device_id in user_sockets:
+            user_sockets[device_id].remove(sid)
+            if not user_sockets[device_id]:
+                del user_sockets[device_id]
         del user_rooms[sid]
+        print(f'User disconnected: {sid}')
+
+# ============================================================================
+# MAIN
+# ============================================================================
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    print(f'🚀 Server starting on port {port}')
-    print(f'🔑 Admin URL: example.com/{app.config["ADMIN_PASSWORD"]}')
-    print(f'📁 Upload folder: {app.config["UPLOAD_FOLDER"]}')
-    print(f'🗑️ Auto-cleanup: Every 1 hour (deletes data older than 2 days)')
-    socketio.run(app, host='0.0.0.0', port=port, debug=True, allow_unsafe_werkzeug=True)
+    socketio.run(app, host='0.0.0.0', port=5000, debug=False)
